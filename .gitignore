@@ -2,5 +2,7 @@
 node_modules/
 users/
 whitelist.json
+admins.json
+shared_projects.json
 .claude/
 CLAUDE.md

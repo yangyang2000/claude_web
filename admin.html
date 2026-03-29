@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claude Admin</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      min-height: 100%; background: #111; color: #abb2bf;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    /* ── Header ── */
+    #header {
+      padding: 10px 20px; background: #0d0d0d; border-bottom: 1px solid #1e1e1e;
+      display: flex; align-items: center; gap: 10px; position: sticky; top: 0; z-index: 10;
+    }
+    .brand { color: #e06c75; font: bold 13px/1 monospace; }
+    .brand-sep { color: #333; }
+    .brand-sub { color: #61afef; font: 13px/1 monospace; }
+    #header-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+    #user-email { font: 12px/1 monospace; color: #61afef; }
+    #user-avatar { width: 22px; height: 22px; border-radius: 50%; display: none; }
+
+    .btn {
+      font: 11px/1 monospace; background: none; border: 1px solid #333;
+      border-radius: 4px; padding: 5px 10px; cursor: pointer; color: #666;
+      white-space: nowrap; text-decoration: none; display: inline-block;
+    }
+    .btn:hover { color: #abb2bf; border-color: #555; }
+    .btn:disabled { opacity: .4; cursor: default; }
+    .btn.accent { color: #98c379; border-color: rgba(152,195,121,.4); }
+    .btn.accent:hover { background: rgba(152,195,121,.1); }
+    .btn.danger { color: #e06c75; border-color: rgba(224,108,117,.4); }
+    .btn.danger:hover { background: rgba(224,108,117,.1); }
+    .btn.muted { color: #444; border-color: #222; }
+    .btn.muted:hover { color: #abb2bf; border-color: #555; }
+    .btn.blue { color: #61afef; border-color: rgba(97,175,239,.4); }
+    .btn.blue:hover { background: rgba(97,175,239,.1); }
+
+    /* ── Layout ── */
+    #content { max-width: 860px; margin: 0 auto; padding: 28px 20px 60px; }
+
+    /* ── Cards ── */
+    .card {
+      background: #0d0d0d; border: 1px solid #1e1e1e; border-radius: 8px;
+      margin-bottom: 24px; overflow: hidden;
+    }
+    .card-header {
+      padding: 12px 16px; border-bottom: 1px solid #1a1a1a;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .card-title { font: bold 12px/1 monospace; color: #abb2bf; flex: 1; letter-spacing: .04em; }
+    .card-badge {
+      font: 10px/1 monospace; color: #444; background: #161616;
+      border: 1px solid #222; border-radius: 3px; padding: 2px 6px;
+    }
+    .card-body { padding: 14px 16px; }
+
+    /* ── Rows ── */
+    .row-list { display: flex; flex-direction: column; gap: 6px; }
+    .row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 7px 10px; background: #111; border: 1px solid #181818;
+      border-radius: 5px;
+    }
+    .row-label { font: 12px/1 monospace; color: #abb2bf; flex: 1; min-width: 0; }
+    .row-sub { font: 10px/1 monospace; color: #333; margin-top: 3px; }
+    .row-main { flex: 1; min-width: 0; }
+    .super-badge {
+      font: 9px/1 monospace; color: #e5c07b; background: rgba(229,192,123,.08);
+      border: 1px solid rgba(229,192,123,.2); border-radius: 3px; padding: 1px 5px;
+    }
+    .empty-msg { font: 12px/1.6 monospace; color: #2e2e2e; padding: 10px 0; }
+
+    /* ── Add forms ── */
+    .add-form {
+      display: flex; gap: 6px; margin-top: 12px; padding-top: 12px;
+      border-top: 1px solid #181818; flex-wrap: wrap;
+    }
+    .add-form input, .add-form textarea {
+      flex: 1; min-width: 160px; background: #161616; border: 1px solid #222;
+      border-radius: 4px; padding: 6px 9px; font: 12px/1 monospace;
+      color: #abb2bf; outline: none;
+    }
+    .add-form input:focus, .add-form textarea:focus { border-color: #444; }
+    .add-form input::placeholder, .add-form textarea::placeholder { color: #2e2e2e; }
+    .add-form textarea { resize: vertical; min-height: 52px; line-height: 1.5; }
+
+    /* ── Shared project expanded editor ── */
+    .sp-row { flex-direction: column; align-items: stretch; gap: 0; }
+    .sp-row-top { display: flex; align-items: center; gap: 8px; }
+    .sp-name { font: bold 12px/1 monospace; color: #abb2bf; }
+    .sp-path { font: 10px/1 monospace; color: #333; margin-top: 3px; }
+    .sp-users { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+    .sp-user-chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      font: 11px/1 monospace; color: #61afef; background: rgba(97,175,239,.08);
+      border: 1px solid rgba(97,175,239,.2); border-radius: 3px; padding: 2px 6px;
+    }
+    .sp-user-chip button {
+      background: none; border: none; cursor: pointer; color: #444;
+      font-size: 11px; padding: 0; line-height: 1;
+    }
+    .sp-user-chip button:hover { color: #e06c75; }
+    .sp-add-user { display: flex; gap: 4px; margin-top: 6px; }
+    .sp-add-user input {
+      flex: 1; background: #161616; border: 1px solid #1e1e1e;
+      border-radius: 4px; padding: 4px 8px; font: 11px/1 monospace;
+      color: #abb2bf; outline: none;
+    }
+    .sp-add-user input:focus { border-color: #333; }
+    .sp-add-user input::placeholder { color: #2a2a2a; }
+    .sp-footer { display: flex; justify-content: flex-end; margin-top: 8px; }
+
+    /* ── New shared project form ── */
+    .sp-new-form {
+      padding: 12px 14px; background: #111; border: 1px solid #222;
+      border-radius: 6px; margin-top: 12px; display: none; flex-direction: column; gap: 8px;
+    }
+    .sp-new-form.open { display: flex; }
+    .form-row { display: flex; gap: 6px; align-items: flex-start; }
+    .form-row label { font: 10px/2.4 monospace; color: #555; width: 52px; flex-shrink: 0; }
+    .form-row input {
+      flex: 1; background: #161616; border: 1px solid #222;
+      border-radius: 4px; padding: 6px 9px; font: 12px/1 monospace;
+      color: #abb2bf; outline: none;
+    }
+    .form-row input:focus { border-color: #444; }
+    .form-row input::placeholder { color: #2e2e2e; }
+    .form-footer { display: flex; justify-content: flex-end; gap: 6px; margin-top: 4px; }
+
+    /* ── Toast ── */
+    #toast {
+      position: fixed; bottom: 20px; right: 20px;
+      font: 12px/1 monospace; padding: 8px 14px;
+      border-radius: 5px; opacity: 0; transition: opacity .2s; pointer-events: none;
+    }
+    #toast.show { opacity: 1; }
+    #toast.ok  { background: rgba(152,195,121,.15); border: 1px solid rgba(152,195,121,.3); color: #98c379; }
+    #toast.err { background: rgba(224,108,117,.15); border: 1px solid rgba(224,108,117,.3); color: #e06c75; }
+  </style>
+</head>
+<body>
+  <div id="header">
+    <span class="brand">Claude</span>
+    <span class="brand-sep">/</span>
+    <span class="brand-sub">Admin</span>
+    <div id="header-right">
+      <img id="user-avatar" alt="">
+      <span id="user-email"></span>
+      <a class="btn muted" href="/">← terminal</a>
+      <a class="btn muted" href="/logout">logout</a>
+    </div>
+  </div>
+
+  <div id="content">
+
+    <!-- Whitelist -->
+    <div class="card" id="card-whitelist">
+      <div class="card-header">
+        <span class="card-title">Allowed Users</span>
+        <span class="card-badge" id="whitelist-count">—</span>
+      </div>
+      <div class="card-body">
+        <div class="row-list" id="whitelist-list"></div>
+        <div class="empty-msg" id="whitelist-empty" style="display:none">No users in whitelist.</div>
+        <div class="add-form">
+          <input id="wl-input" type="email" placeholder="user@example.com" autocomplete="off">
+          <button class="btn accent" id="wl-add-btn">+ add</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Shared Projects -->
+    <div class="card" id="card-shared">
+      <div class="card-header">
+        <span class="card-title">Shared Projects</span>
+        <span class="card-badge" id="shared-count">—</span>
+        <button class="btn accent" id="sp-new-btn">+ new</button>
+      </div>
+      <div class="card-body">
+        <div class="row-list" id="shared-list"></div>
+        <div class="empty-msg" id="shared-empty" style="display:none">No shared projects configured.</div>
+        <div class="sp-new-form" id="sp-new-form">
+          <div class="form-row">
+            <label>path</label>
+            <input id="sp-path" type="text" placeholder="/absolute/path/to/folder">
+          </div>
+          <div class="form-row">
+            <label>name</label>
+            <input id="sp-name" type="text" placeholder="Display name (optional)">
+          </div>
+          <div class="form-row">
+            <label>users</label>
+            <input id="sp-users" type="text" placeholder="email1@x.com, email2@x.com">
+          </div>
+          <div class="form-footer">
+            <button class="btn muted" id="sp-cancel-btn">Cancel</button>
+            <button class="btn accent" id="sp-save-btn">Add project</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Active Sessions -->
+    <div class="card" id="card-active">
+      <div class="card-header">
+        <span class="card-title">Active Sessions</span>
+        <span class="card-badge" id="active-count">—</span>
+        <button class="btn muted" id="active-refresh-btn">↻ refresh</button>
+      </div>
+      <div class="card-body">
+        <div class="row-list" id="active-list"></div>
+        <div class="empty-msg" id="active-empty" style="display:none">No active sessions.</div>
+      </div>
+    </div>
+
+    <!-- Admins -->
+    <div class="card" id="card-admins">
+      <div class="card-header">
+        <span class="card-title">Admins</span>
+        <span class="card-badge" id="admins-count">—</span>
+      </div>
+      <div class="card-body">
+        <div class="row-list" id="admins-list"></div>
+        <div class="empty-msg" id="admins-empty" style="display:none">No admins.</div>
+        <div class="add-form" id="admins-add-form">
+          <input id="admin-input" type="email" placeholder="user@example.com" autocomplete="off">
+          <button class="btn accent" id="admin-add-btn">+ add admin</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div id="toast"></div>
+
+  <script>
+  let me = null;
+  let superAdmin = null;
+
+  // ── Toast ──────────────────────────────────────────────────────────────────
+  let toastTimer;
+  function toast(msg, type = 'ok') {
+    const el = document.getElementById('toast');
+    el.textContent = msg; el.className = `show ${type}`;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.className = ''; }, 2800);
+  }
+
+  // ── API helpers ────────────────────────────────────────────────────────────
+  async function api(method, path, body) {
+    const opts = { method, headers: {} };
+    if (body) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
+    const r = await fetch(path, opts);
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({ error: r.statusText }));
+      throw new Error(err.error || r.statusText);
+    }
+    return r.json();
+  }
+
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ── Whitelist ──────────────────────────────────────────────────────────────
+  async function loadWhitelist() {
+    const list = await api('GET', '/admin/api/whitelist');
+    const ul   = document.getElementById('whitelist-list');
+    const em   = document.getElementById('whitelist-empty');
+    document.getElementById('whitelist-count').textContent = `${list.length}`;
+    ul.innerHTML = '';
+    if (!list.length) { em.style.display = 'block'; return; }
+    em.style.display = 'none';
+    list.forEach(email => {
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.innerHTML = `<span class="row-label">${escHtml(email)}</span>
+        <button class="btn danger" data-email="${escHtml(email)}">remove</button>`;
+      row.querySelector('button').addEventListener('click', () => removeWhitelist(email));
+      ul.appendChild(row);
+    });
+  }
+
+  async function addWhitelist() {
+    const input = document.getElementById('wl-input');
+    const email = input.value.trim().toLowerCase();
+    if (!email) return;
+    try {
+      await api('POST', '/admin/api/whitelist', { email });
+      input.value = '';
+      await loadWhitelist();
+      toast(`Added ${email} to whitelist`);
+    } catch(e) { toast(e.message, 'err'); }
+  }
+
+  async function removeWhitelist(email) {
+    if (!confirm(`Remove ${email} from whitelist?`)) return;
+    try {
+      await api('DELETE', `/admin/api/whitelist/${encodeURIComponent(email)}`);
+      await loadWhitelist();
+      toast(`Removed ${email}`);
+    } catch(e) { toast(e.message, 'err'); }
+  }
+
+  document.getElementById('wl-add-btn').addEventListener('click', addWhitelist);
+  document.getElementById('wl-input').addEventListener('keydown', e => { if (e.key === 'Enter') addWhitelist(); });
+
+  // ── Shared Projects ────────────────────────────────────────────────────────
+  let sharedProjects = [];
+
+  async function loadSharedProjects() {
+    sharedProjects = await api('GET', '/admin/api/shared-projects');
+    renderSharedProjects();
+  }
+
+  function renderSharedProjects() {
+    const ul  = document.getElementById('shared-list');
+    const em  = document.getElementById('shared-empty');
+    document.getElementById('shared-count').textContent = `${sharedProjects.length}`;
+    ul.innerHTML = '';
+    if (!sharedProjects.length) { em.style.display = 'block'; return; }
+    em.style.display = 'none';
+
+    sharedProjects.forEach(p => {
+      const row = document.createElement('div');
+      row.className = 'row sp-row';
+      const name      = p.name || p.path.split('/').pop();
+      const users     = p.users || [];
+      const chipsHtml = users.map(u =>
+        `<span class="sp-user-chip">${escHtml(u)}
+           <button data-user="${escHtml(u)}" title="Remove user">✕</button>
+         </span>`
+      ).join('');
+
+      row.innerHTML = `
+        <div class="sp-row-top">
+          <div class="row-main">
+            <div class="sp-name">${escHtml(name)}</div>
+            <div class="sp-path">${escHtml(p.path)}</div>
+          </div>
+          <button class="btn danger sp-delete-btn">delete</button>
+        </div>
+        <div class="sp-users">${chipsHtml || '<span style="font:10px/1 monospace;color:#2e2e2e">no users</span>'}</div>
+        <div class="sp-add-user">
+          <input type="email" placeholder="add user by email…" id="sp-user-input-${escHtml(p.id)}" autocomplete="off">
+          <button class="btn blue sp-add-user-btn">+ user</button>
+        </div>`;
+
+      row.querySelector('.sp-delete-btn').addEventListener('click', () => deleteSharedProject(p));
+      row.querySelector('.sp-add-user-btn').addEventListener('click', () => addUserToProject(p));
+      row.querySelector(`#sp-user-input-${p.id}`).addEventListener('keydown', e => {
+        if (e.key === 'Enter') addUserToProject(p);
+      });
+      row.querySelectorAll('.sp-user-chip button').forEach(btn => {
+        btn.addEventListener('click', () => removeUserFromProject(p, btn.dataset.user));
+      });
+      ul.appendChild(row);
+    });
+  }
+
+  async function deleteSharedProject(p) {
+    if (!confirm(`Delete shared project "${p.name || p.path}"?`)) return;
+    try {
+      await api('DELETE', `/admin/api/shared-projects/${p.id}`);
+      await loadSharedProjects();
+      toast('Shared project removed');
+    } catch(e) { toast(e.message, 'err'); }
+  }
+
+  async function addUserToProject(p) {
+    const input = document.getElementById(`sp-user-input-${p.id}`);
+    const email = input.value.trim().toLowerCase();
+    if (!email) return;
+    const users = [...(p.users || [])];
+    if (users.includes(email)) { toast('User already has access', 'err'); return; }
+    users.push(email);
+    try {
+      await api('PUT', `/admin/api/shared-projects/${p.id}`, { ...p, users });
+      input.value = '';
+      await loadSharedProjects();
+      toast(`Granted ${email} access`);
+    } catch(e) { toast(e.message, 'err'); }
+  }
+
+  async function removeUserFromProject(p, email) {
+    const users = (p.users || []).filter(u => u !== email);
+    try {
+      await api('PUT', `/admin/api/shared-projects/${p.id}`, { ...p, users });
+      await loadSharedProjects();
+      toast(`Removed ${email}`);
+    } catch(e) { toast(e.message, 'err'); }
+  }
+
+  // ── Active Sessions ────────────────────────────────────────────────────────
+  async function loadActiveSessions() {
+    const list = await api('GET', '/admin/api/active-sessions');
+    const ul   = document.getElementById('active-list');
+    const em   = document.getElementById('active-empty');
+    document.getElementById('active-count').textContent = `${list.length}`;
+    ul.innerHTML = '';
+    if (!list.length) { em.style.display = 'block'; return; }
+    em.style.display = 'none';
+    list.forEach(s => {
+      const row = document.createElement('div');
+      row.className = 'row';
+      const shortDir = s.workDir.replace(/^\/home\/[^/]+/, '~');
+      row.innerHTML = `
+        <div class="row-main">
+          <div class="row-label">${escHtml(s.email)}</div>
+          <div class="row-sub">${escHtml(shortDir)} · ${s.clients} client${s.clients !== 1 ? 's' : ''}</div>
+        </div>
+        <button class="btn danger">kill</button>`;
+      row.querySelector('button').addEventListener('click', () => killActiveSession(s.email));
+      ul.appendChild(row);
+    });
+  }
+
+  async function killActiveSession(email) {
+    if (!confirm(`Kill active session for ${email}?`)) return;
+    try {
+      await api('DELETE', `/admin/api/active-sessions/${encodeURIComponent(email)}`);
+      await loadActiveSessions();
+      toast(`Killed session for ${email}`);
+    } catch(e) { toast(e.message, 'err'); }
+  }
+
+  document.getElementById('active-refresh-btn').addEventListener('click', loadActiveSessions);
+
+  // New project form
+  const spNewBtn    = document.getElementById('sp-new-btn');
+  const spNewForm   = document.getElementById('sp-new-form');
+  const spCancelBtn = document.getElementById('sp-cancel-btn');
+  const spSaveBtn   = document.getElementById('sp-save-btn');
+
+  spNewBtn.addEventListener('click', () => {
+    spNewForm.classList.add('open');
+    document.getElementById('sp-path').focus();
+  });
+  spCancelBtn.addEventListener('click', () => {
+    spNewForm.classList.remove('open');
+    document.getElementById('sp-path').value = '';
+    document.getElementById('sp-name').value = '';
+    document.getElementById('sp-users').value = '';
+  });
+  spSaveBtn.addEventListener('click', async () => {
+    const p     = document.getElementById('sp-path').value.trim();
+    const name  = document.getElementById('sp-name').value.trim();
+    const users = document.getElementById('sp-users').value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    if (!p) { toast('Path is required', 'err'); return; }
+    try {
+      await api('POST', '/admin/api/shared-projects', { path: p, name: name || undefined, users });
+      spCancelBtn.click();
+      await loadSharedProjects();
+      toast('Shared project added');
+    } catch(e) { toast(e.message, 'err'); }
+  });
+
+  // ── Admins ─────────────────────────────────────────────────────────────────
+  async function loadAdmins() {
+    const data = await api('GET', '/admin/api/admins');
+    superAdmin = data.superAdmin;
+    const list = data.admins;
+    const ul   = document.getElementById('admins-list');
+    const em   = document.getElementById('admins-empty');
+    const addForm = document.getElementById('admins-add-form');
+    document.getElementById('admins-count').textContent = `${list.length}`;
+
+    // Only super admin sees add/remove controls
+    const isSuperAdmin = me?.email === superAdmin;
+    addForm.style.display = isSuperAdmin ? '' : 'none';
+
+    ul.innerHTML = '';
+    if (!list.length) { em.style.display = 'block'; return; }
+    em.style.display = 'none';
+
+    list.forEach(email => {
+      const row     = document.createElement('div');
+      row.className = 'row';
+      const isSuper = email === superAdmin;
+      row.innerHTML = `
+        <span class="row-label">
+          ${escHtml(email)}
+          ${isSuper ? '<span class="super-badge">owner</span>' : ''}
+        </span>
+        ${isSuperAdmin && !isSuper
+          ? `<button class="btn danger" data-email="${escHtml(email)}">remove</button>`
+          : ''}`;
+      if (isSuperAdmin && !isSuper) {
+        row.querySelector('button').addEventListener('click', () => removeAdmin(email));
+      }
+      ul.appendChild(row);
+    });
+  }
+
+  async function addAdmin() {
+    const input = document.getElementById('admin-input');
+    const email = input.value.trim().toLowerCase();
+    if (!email) return;
+    try {
+      await api('POST', '/admin/api/admins', { email });
+      input.value = '';
+      await loadAdmins();
+      toast(`${email} is now an admin`);
+    } catch(e) { toast(e.message, 'err'); }
+  }
+
+  async function removeAdmin(email) {
+    if (!confirm(`Remove admin access for ${email}?`)) return;
+    try {
+      await api('DELETE', `/admin/api/admins/${encodeURIComponent(email)}`);
+      await loadAdmins();
+      toast(`Removed admin: ${email}`);
+    } catch(e) { toast(e.message, 'err'); }
+  }
+
+  document.getElementById('admin-add-btn').addEventListener('click', addAdmin);
+  document.getElementById('admin-input').addEventListener('keydown', e => { if (e.key === 'Enter') addAdmin(); });
+
+  // ── Init ───────────────────────────────────────────────────────────────────
+  async function init() {
+    me = await fetch('/me').then(r => r.json()).catch(() => null);
+    if (!me) { location = '/login'; return; }
+    document.getElementById('user-email').textContent = me.email;
+    if (me.avatar) {
+      const img = document.getElementById('user-avatar');
+      img.src = me.avatar; img.style.display = 'block';
+    }
+    await Promise.all([loadWhitelist(), loadSharedProjects(), loadAdmins(), loadActiveSessions()]);
+  }
+
+  init();
+  </script>
+</body>
+</html>

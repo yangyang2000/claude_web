@@ -17,12 +17,81 @@ const IDLE_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 const OUTPUT_BUFFER_SIZE = 200_000;
 const MAX_SESSIONS = 100;
 
+function newId() { return crypto.randomBytes(6).toString('hex'); }
+
 // ── Whitelist ─────────────────────────────────────────────────────────────────
 
 const whitelistPath = path.join(__dirname, 'whitelist.json');
 if (!fs.existsSync(whitelistPath)) fs.writeFileSync(whitelistPath, '[]');
+
+let _whitelist = null;
 function getWhitelist() {
-  return JSON.parse(fs.readFileSync(whitelistPath, 'utf8'));
+  if (!_whitelist) {
+    try { _whitelist = JSON.parse(fs.readFileSync(whitelistPath, 'utf8')); }
+    catch (_) { _whitelist = []; }
+  }
+  return _whitelist;
+}
+function saveWhitelist(list) {
+  _whitelist = list;
+  fs.writeFileSync(whitelistPath, JSON.stringify(list, null, 2));
+}
+
+// ── Admins ────────────────────────────────────────────────────────────────────
+// admins.json: array of email strings. SUPER_ADMIN can never be removed via UI.
+
+const SUPER_ADMIN = 'yangyang2000@gmail.com';
+const adminsPath  = path.join(__dirname, 'admins.json');
+if (!fs.existsSync(adminsPath)) fs.writeFileSync(adminsPath, JSON.stringify([SUPER_ADMIN], null, 2));
+
+let _admins = null;
+function getAdmins() {
+  if (!_admins) {
+    try { _admins = JSON.parse(fs.readFileSync(adminsPath, 'utf8')); }
+    catch (_) { _admins = [SUPER_ADMIN]; }
+  }
+  return _admins;
+}
+function saveAdmins(list) {
+  _admins = list;
+  fs.writeFileSync(adminsPath, JSON.stringify(list, null, 2));
+}
+
+// ── Shared projects ───────────────────────────────────────────────────────────
+// shared_projects.json: [{ "id": "hex", "path": "/abs/path", "name": "Label", "users": ["email@..."] }]
+
+const sharedProjectsPath = path.join(__dirname, 'shared_projects.json');
+
+let _sharedProjects = null;
+function getSharedProjects() {
+  if (!_sharedProjects) {
+    let list;
+    try { list = JSON.parse(fs.readFileSync(sharedProjectsPath, 'utf8')); }
+    catch (_) { _sharedProjects = []; return _sharedProjects; }
+    // Migrate: assign stable IDs to any entries that don't have one
+    let needsSave = false;
+    list = list.map(p => { if (!p.id) { needsSave = true; return { id: newId(), ...p }; } return p; });
+    if (needsSave) fs.writeFileSync(sharedProjectsPath, JSON.stringify(list, null, 2));
+    _sharedProjects = list;
+  }
+  return _sharedProjects;
+}
+function saveSharedProjects(list) {
+  _sharedProjects = list;
+  fs.writeFileSync(sharedProjectsPath, JSON.stringify(list, null, 2));
+}
+function getAccessibleSharedProjects(email) {
+  return getSharedProjects().filter(p => Array.isArray(p.users) && p.users.includes(email));
+}
+function isSharedProjectPath(workDir) {
+  return getSharedProjects().some(p => workDir === p.path);
+}
+function isAuthorizedWorkDir(email, workDir) {
+  const username     = email.split('@')[0];
+  const personalBase = path.join(os.homedir(), 'Documents', 'Claude_Projects', username);
+  const normalized   = path.resolve(workDir);
+  if (normalized.startsWith(personalBase + path.sep) || normalized === personalBase) return true;
+  return getAccessibleSharedProjects(email).some(p => path.resolve(p.path) === normalized);
 }
 
 // ── Express + Auth ────────────────────────────────────────────────────────────
@@ -64,14 +133,12 @@ passport.deserializeUser((u, done) => done(null, u));
 
 // ── Session storage helpers ───────────────────────────────────────────────────
 
-function newId() { return crypto.randomBytes(6).toString('hex'); }
-
 function userDataDir(email) {
   return path.join(__dirname, 'users', email.replace(/[^a-zA-Z0-9._-]/g, '_'));
 }
 
-function sessionsFilePath(email)  { return path.join(userDataDir(email), 'sessions.json'); }
-function activeFilePath(email)    { return path.join(userDataDir(email), 'active.json'); }
+function sessionsFilePath(email) { return path.join(userDataDir(email), 'sessions.json'); }
+function activeFilePath(email)   { return path.join(userDataDir(email), 'active.json'); }
 
 // ── Project directory helpers ─────────────────────────────────────────────────
 
@@ -89,12 +156,9 @@ function resolveWorkDir(email, id, projectName) {
   const safeName = sanitizeDir(projectName);
   if (!safeName) return path.join(base, id);
 
-  // Find a non-conflicting directory name
   let dir = path.join(base, safeName);
   let n = 2;
-  while (fs.existsSync(dir)) {
-    dir = path.join(base, `${safeName}-${n++}`);
-  }
+  while (fs.existsSync(dir)) dir = path.join(base, `${safeName}-${n++}`);
   return dir;
 }
 
@@ -156,8 +220,13 @@ function startSession(user, sessionId, opts = {}) {
   const workDir = opts.workDir || resolveWorkDir(email, sessionId, opts.projectName);
   fs.mkdirSync(workDir, { recursive: true });
 
+  const ptyEnv = { ...process.env };
+  delete ptyEnv.SESSION_SECRET;
+  delete ptyEnv.GOOGLE_CLIENT_ID;
+  delete ptyEnv.GOOGLE_CLIENT_SECRET;
+
   const ptyProcess = pty.spawn('claude', [], {
-    name: 'xterm-256color', cols: 220, rows: 50, cwd: workDir, env: process.env,
+    name: 'xterm-256color', cols: 220, rows: 50, cwd: workDir, env: ptyEnv,
   });
 
   const sess = { ptyProcess, buffer: '', clients: new Set(), killTimer: null, sessionId, workDir };
@@ -221,24 +290,35 @@ function requireAuth(req, res, next) {
 
 app.get('/me', requireAuth, (req, res) => {
   const sess = live.get(req.user.email);
-  res.json({ email: req.user.email, name: req.user.name, avatar: req.user.avatar, hasSession: !!sess });
+  res.json({ email: req.user.email, name: req.user.name, avatar: req.user.avatar, hasSession: !!sess, isAdmin: getAdmins().includes(req.user.email) });
 });
 
-// List project directories for the current user
+// List project directories for the current user (personal + shared)
 app.get('/api/projects', requireAuth, (req, res) => {
-  const username = req.user.email.split('@')[0];
+  const email    = req.user.email;
+  const username = email.split('@')[0];
   const base     = path.join(os.homedir(), 'Documents', 'Claude_Projects', username);
+
+  let personal = [];
   try {
-    if (!fs.existsSync(base)) return res.json([]);
-    const entries = fs.readdirSync(base, { withFileTypes: true })
-      .filter(e => e.isDirectory())
-      .map(e => {
-        const fullPath = path.join(base, e.name);
-        return { name: e.name, path: fullPath, mtime: fs.statSync(fullPath).mtimeMs };
-      })
-      .sort((a, b) => b.mtime - a.mtime);
-    res.json(entries);
-  } catch (_) { res.json([]); }
+    if (fs.existsSync(base)) {
+      personal = fs.readdirSync(base, { withFileTypes: true })
+        .filter(e => e.isDirectory())
+        .map(e => {
+          const fullPath = path.join(base, e.name);
+          return { name: e.name, path: fullPath, mtime: fs.statSync(fullPath).mtimeMs, shared: false };
+        });
+    }
+  } catch (_) {}
+
+  const shared = getAccessibleSharedProjects(email)
+    .filter(p => { try { return fs.existsSync(p.path); } catch (_) { return false; } })
+    .map(p => {
+      const name = p.name || path.basename(p.path);
+      return { name, path: p.path, mtime: fs.statSync(p.path).mtimeMs, shared: true };
+    });
+
+  res.json([...personal, ...shared].sort((a, b) => b.mtime - a.mtime));
 });
 
 // Session history CRUD
@@ -247,18 +327,25 @@ app.get('/api/sessions', requireAuth, (req, res) => {
 });
 
 app.delete('/api/sessions', requireAuth, (req, res) => {
-  saveSessionHistory(req.user.email, []);
+  const email = req.user.email;
+  const list  = loadSessionHistory(email);
+  // Delete all non-shared project directories
+  list.forEach(s => {
+    if (s.workDir && !isSharedProjectPath(s.workDir))
+      fs.rm(s.workDir, { recursive: true, force: true }, () => {});
+  });
+  saveSessionHistory(email, []);
   res.json({ ok: true });
 });
 
 app.delete('/api/sessions/:id', requireAuth, (req, res) => {
-  const email   = req.user.email;
-  const list    = loadSessionHistory(email);
-  const entry   = list.find(s => s.id === req.params.id);
+  const email = req.user.email;
+  const list  = loadSessionHistory(email);
+  const entry = list.find(s => s.id === req.params.id);
   saveSessionHistory(email, list.filter(s => s.id !== req.params.id));
-  // Remove the project directory
+  // Remove the project directory, but never delete shared project folders
   const dir = entry?.workDir;
-  if (dir) fs.rm(dir, { recursive: true, force: true }, () => {});
+  if (dir && !isSharedProjectPath(dir)) fs.rm(dir, { recursive: true, force: true }, () => {});
   res.json({ ok: true });
 });
 
@@ -314,9 +401,12 @@ app.post('/api/sessions/:id/resume', requireAuth, (req, res) => {
 
 // PTY control
 app.post('/session/reset', requireAuth, (req, res) => {
-  const email                        = req.user.email;
+  const email    = req.user.email;
   const { projectName, workDir: explicitWorkDir } = req.body || {};
-  const clients                      = live.get(email)?.clients ?? new Set();
+  if (explicitWorkDir && !isAuthorizedWorkDir(email, explicitWorkDir)) {
+    return res.status(403).json({ error: 'not authorized' });
+  }
+  const clients = live.get(email)?.clients ?? new Set();
   killSession(email);
   const id      = newId();
   const newSess = startSession(req.user, id,
@@ -330,13 +420,14 @@ app.post('/session/reset', requireAuth, (req, res) => {
 app.post('/session/refresh', requireAuth, (req, res) => {
   const email = req.user.email;
   const sess  = live.get(email);
-  if (!sess) { return res.json({ ok: true }); }
+  if (!sess) return res.json({ ok: true });
 
-  const savedSessionId  = sess.sessionId;
-  const savedWorkDir    = sess.workDir;
-  const bufferLenBefore = sess.buffer.length;
-  const SETTLE_MS       = 500;
-  const TIMEOUT_MS      = 20000;
+  const savedSessionId = sess.sessionId;
+  const savedWorkDir   = sess.workDir;
+  // Snapshot the buffer now — before compact output contaminates it — for a meaningful title
+  const preCompactBuffer = sess.buffer;
+  const SETTLE_MS  = 500;
+  const TIMEOUT_MS = 20000;
 
   let done = false;
   let settleTimer, hardTimer;
@@ -346,10 +437,9 @@ app.post('/session/refresh', requireAuth, (req, res) => {
     done = true;
     clearTimeout(settleTimer);
     clearTimeout(hardTimer);
+    onDataDisposable.dispose();
 
-    // Extract title/snippet from compact output tail
-    const tail = sess.buffer.slice(bufferLenBefore);
-    const { title, snippet } = extractTitleAndSnippet(tail);
+    const { title, snippet } = extractTitleAndSnippet(preCompactBuffer);
 
     pushToHistory(email, {
       id:        savedSessionId,
@@ -362,18 +452,128 @@ app.post('/session/refresh', requireAuth, (req, res) => {
     const clients = new Set(sess.clients);
     killSession(email);
     const id      = newId();
-    const newSess = startSession(req.user, id);
+    // Resume in the same project directory after refresh
+    const newSess = startSession(req.user, id, { workDir: savedWorkDir });
     clients.forEach(c => newSess.clients.add(c));
     broadcast(email, { type: 'meta', restarted: true, resumed: false, workDir: newSess.workDir });
     res.json({ ok: true });
   }
 
   sess.ptyProcess.write('/compact\r');
-  sess.ptyProcess.onData(() => {
+  const onDataDisposable = sess.ptyProcess.onData(() => {
     clearTimeout(settleTimer);
     settleTimer = setTimeout(doRestart, SETTLE_MS);
   });
   hardTimer = setTimeout(doRestart, TIMEOUT_MS);
+});
+
+// ── Admin routes ─────────────────────────────────────────────────────────────
+
+function requireAdmin(req, res, next) {
+  const isJson = req.xhr || (req.headers.accept || '').includes('application/json');
+  if (!req.isAuthenticated()) {
+    return isJson ? res.status(401).json({ error: 'not authenticated' }) : res.redirect('/login');
+  }
+  if (!getAdmins().includes(req.user.email)) {
+    return isJson ? res.status(403).json({ error: 'forbidden' }) : res.redirect('/');
+  }
+  next();
+}
+
+// Serve admin page (outside public/ so it's never served statically)
+app.get('/admin', requireAdmin, (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin.html'));
+});
+
+// Whitelist management
+app.get('/admin/api/whitelist', requireAdmin, (req, res) => {
+  res.json(getWhitelist());
+});
+app.post('/admin/api/whitelist', requireAdmin, (req, res) => {
+  const email = (req.body.email || '').trim().toLowerCase();
+  if (!email) return res.status(400).json({ error: 'email required' });
+  const list = getWhitelist();
+  if (list.includes(email)) return res.status(409).json({ error: 'already in whitelist' });
+  list.push(email);
+  saveWhitelist(list);
+  res.json({ ok: true });
+});
+app.delete('/admin/api/whitelist/:email', requireAdmin, (req, res) => {
+  const email = decodeURIComponent(req.params.email);
+  saveWhitelist(getWhitelist().filter(e => e !== email));
+  res.json({ ok: true });
+});
+
+// Shared projects management
+app.get('/admin/api/shared-projects', requireAdmin, (req, res) => {
+  res.json(getSharedProjects());
+});
+app.post('/admin/api/shared-projects', requireAdmin, (req, res) => {
+  const { path: p, name, users } = req.body;
+  if (!p) return res.status(400).json({ error: 'path required' });
+  const list = getSharedProjects();
+  list.push({ id: newId(), path: p.trim(), name: (name || '').trim() || undefined, users: Array.isArray(users) ? users : [] });
+  saveSharedProjects(list);
+  res.json({ ok: true });
+});
+app.put('/admin/api/shared-projects/:id', requireAdmin, (req, res) => {
+  const list = getSharedProjects();
+  const idx  = list.findIndex(p => p.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'not found' });
+  const { path: p, name, users } = req.body;
+  if (!p) return res.status(400).json({ error: 'path required' });
+  list[idx] = { ...list[idx], path: p.trim(), name: (name || '').trim() || undefined, users: Array.isArray(users) ? users : [] };
+  saveSharedProjects(list);
+  res.json({ ok: true });
+});
+app.delete('/admin/api/shared-projects/:id', requireAdmin, (req, res) => {
+  const list = getSharedProjects();
+  const idx  = list.findIndex(p => p.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'not found' });
+  list.splice(idx, 1);
+  saveSharedProjects(list);
+  res.json({ ok: true });
+});
+
+// Admin users management (super admin only)
+app.get('/admin/api/admins', requireAdmin, (req, res) => {
+  res.json({ admins: getAdmins(), superAdmin: SUPER_ADMIN });
+});
+app.post('/admin/api/admins', requireAdmin, (req, res) => {
+  if (req.user.email !== SUPER_ADMIN) return res.status(403).json({ error: 'forbidden' });
+  const email = (req.body.email || '').trim().toLowerCase();
+  if (!email) return res.status(400).json({ error: 'email required' });
+  const list = getAdmins();
+  if (list.includes(email)) return res.status(409).json({ error: 'already an admin' });
+  list.push(email);
+  saveAdmins(list);
+  res.json({ ok: true });
+});
+app.delete('/admin/api/admins/:email', requireAdmin, (req, res) => {
+  if (req.user.email !== SUPER_ADMIN) return res.status(403).json({ error: 'forbidden' });
+  const email = decodeURIComponent(req.params.email);
+  if (email === SUPER_ADMIN) return res.status(403).json({ error: 'cannot remove super admin' });
+  saveAdmins(getAdmins().filter(e => e !== email));
+  res.json({ ok: true });
+});
+
+// Active sessions (view + kill)
+app.get('/admin/api/active-sessions', requireAdmin, (req, res) => {
+  const sessions = [];
+  for (const [email, sess] of live) {
+    sessions.push({
+      email,
+      sessionId: sess.sessionId,
+      workDir:   sess.workDir,
+      clients:   sess.clients.size,
+    });
+  }
+  res.json(sessions);
+});
+app.delete('/admin/api/active-sessions/:email', requireAdmin, (req, res) => {
+  const email = decodeURIComponent(req.params.email);
+  killSession(email);
+  res.json({ ok: true });
 });
 
 // ── Static files (auth-guarded) ───────────────────────────────────────────────
@@ -413,7 +613,7 @@ wss.on('connection', (ws, request) => {
     sess.clients.add(ws);
   } else {
     // Check for persisted active session
-    const active = loadActive(email);
+    const active   = loadActive(email);
     const canResume = active?.sessionId && active?.workDir && fs.existsSync(active.workDir);
     const sessionId = canResume ? active.sessionId : newId();
     isResumed = canResume;
@@ -426,8 +626,8 @@ wss.on('connection', (ws, request) => {
 
   ws.on('message', (raw) => {
     try {
-      const msg      = JSON.parse(raw);
-      const current  = live.get(email);
+      const msg     = JSON.parse(raw);
+      const current = live.get(email);
       if (!current) return;
       if (msg.type === 'input')  current.ptyProcess.write(msg.data);
       if (msg.type === 'resize') current.ptyProcess.resize(Math.max(1, msg.cols), Math.max(1, msg.rows));
@@ -447,5 +647,18 @@ wss.on('connection', (ws, request) => {
     }
   });
 });
+
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
+
+function shutdown(signal) {
+  console.log(`[${signal}] shutting down — killing ${live.size} live session(s)…`);
+  for (const [email] of live) killSession(email);
+  server.close(() => process.exit(0));
+  // Force-exit if server.close stalls
+  setTimeout(() => process.exit(1), 5000);
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT',  () => shutdown('SIGINT'));
 
 server.listen(PORT, () => console.log(`Claude Code Web Terminal → ${BASE_URL}`));
