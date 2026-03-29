@@ -110,12 +110,99 @@ When starting a new session you'll be prompted to pick an existing project folde
 
 ## Remote access
 
-To expose the server to the internet (e.g. so you can reach your home machine from anywhere):
+### Option A: Dynamic DNS + port forwarding (host it yourself)
 
-1. Set `BASE_URL` in `.env` to your public URL (e.g. `https://claude.yourdomain.com`)
-2. Make sure the OAuth redirect URI in Google Cloud Console matches
-3. Use a reverse proxy (nginx, Caddy) or a tunnel (ngrok, Cloudflare Tunnel) in front of port 3000
-4. Use HTTPS — the session cookie is set to `secure: true` when `BASE_URL` starts with `https://`
+This is the best option if you want to run Claude Web on a home machine and reach it from anywhere, without paying for a VPS.
+
+**1. Get a dynamic DNS hostname**
+
+Your home IP address changes periodically. A dynamic DNS (DDNS) service gives you a stable hostname (e.g. `yourname.duckdns.org`) that automatically updates when your IP changes.
+
+- [DuckDNS](https://www.duckdns.org/) — free, simple, widely used
+- [No-IP](https://www.noip.com/) — free tier available
+- [Cloudflare](https://www.cloudflare.com/) — free if you own a domain; use their DDNS API
+
+For DuckDNS, create an account, pick a subdomain, then set up the update client on your machine:
+```bash
+# Example cron job to keep DuckDNS updated every 5 minutes
+*/5 * * * * curl -s "https://www.duckdns.org/update?domains=yourname&token=your-token&ip=" > /dev/null
+```
+
+**2. Forward the port on your router**
+
+Log in to your router admin panel (usually `192.168.1.1` or `192.168.0.1`) and add a port forwarding rule:
+
+| Setting | Value |
+|---|---|
+| External port | 443 (HTTPS) |
+| Internal IP | Your machine's local IP (e.g. `192.168.1.100`) |
+| Internal port | 3000 (or whichever port Claude Web runs on) |
+| Protocol | TCP |
+
+To find your machine's local IP: `ip addr show | grep "inet "` (Linux) or `ipconfig` (Windows).
+
+**3. Set up HTTPS with Caddy (recommended)**
+
+Caddy automatically provisions and renews a free TLS certificate via Let's Encrypt. Install it, then create a `Caddyfile`:
+
+```
+yourname.duckdns.org {
+    reverse_proxy localhost:3000
+}
+```
+
+Start Caddy:
+```bash
+caddy run --config Caddyfile
+```
+
+Caddy handles HTTPS automatically. No certificate management needed.
+
+**4. Update your config**
+
+Set `BASE_URL` in `.env` to your DDNS hostname:
+```env
+BASE_URL=https://yourname.duckdns.org
+```
+
+Add the OAuth redirect URI in Google Cloud Console:
+```
+https://yourname.duckdns.org/auth/google/callback
+```
+
+---
+
+### Option B: Cloudflare Tunnel (no port forwarding required)
+
+If your router doesn't support port forwarding, or you'd rather not expose your home IP, Cloudflare Tunnel creates an outbound-only encrypted tunnel — no inbound firewall rules needed.
+
+```bash
+# Install cloudflared
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
+chmod +x cloudflared && sudo mv cloudflared /usr/local/bin
+
+# Authenticate and create a tunnel
+cloudflared tunnel login
+cloudflared tunnel create claude-web
+cloudflared tunnel route dns claude-web claude.yourdomain.com
+
+# Run the tunnel
+cloudflared tunnel run --url http://localhost:3000 claude-web
+```
+
+Requires a domain on Cloudflare's free plan. Once running, set `BASE_URL=https://claude.yourdomain.com` and add the matching OAuth redirect URI.
+
+---
+
+### Option C: ngrok (quick and temporary)
+
+Good for testing but not reliable as a permanent solution (URL changes on restart unless you pay).
+
+```bash
+ngrok http 3000
+```
+
+Copy the `https://...ngrok-free.app` URL into `BASE_URL` and the Google OAuth redirect URI.
 
 ## Running as a service (optional)
 
