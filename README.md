@@ -2,6 +2,30 @@
 
 A self-hosted web terminal for [Claude Code](https://claude.ai/code), accessible from any browser. Supports multiple users via Google OAuth, persistent sessions, and per-user project directories.
 
+## Features
+
+### Terminal
+A full xterm-based terminal running Claude Code in your browser. Input and output stream over WebSocket in real time. If you close the tab or lose connection, the session stays alive on the server for up to 2 hours and replays the output buffer when you reconnect.
+
+### Session history
+Click **history** in the header to open the sidebar. Every session you explicitly save (or that gets saved automatically when you switch away) appears here with a title, timestamp, and a snippet of the conversation. You can:
+- **Search** sessions by title or content using the search box
+- **Continue** a past session by clicking it — the server restarts Claude Code in the same project directory, resuming where you left off
+- **Rename** a session by hovering and clicking the pencil icon (✎) next to the title
+- **Save** the current session at any time with the **save** button in the sidebar header
+- **Delete** individual sessions with the ✕ button, or wipe everything with **clear all**
+
+### Project management
+Each session runs Claude Code inside a dedicated project directory under `~/Documents/Claude_Projects/{username}/`. Clicking **new session** (or the current project path shown in the header) opens a project picker where you can:
+- Select an existing project folder to open a fresh conversation in that project
+- Type a new name to create a new project directory
+- Leave blank to start an unnamed session
+
+### Memory management
+Two buttons in the header help manage Claude's context window:
+- **/compact** — sends Claude Code's `/compact` command, which summarises the conversation into a memory file and clears the context, keeping Claude fast on long sessions
+- **refresh memory** — compacts the conversation, saves the session to history, then starts a completely fresh context window in a new session
+
 ## Prerequisites
 
 - Node.js 18+
