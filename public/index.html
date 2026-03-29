@@ -80,6 +80,7 @@
     }
     .project-item:hover { background: #131313; }
     .project-item.active-project { background: rgba(97,175,239,.05); border-left-color: #61afef; }
+    .project-item.filtered { background: rgba(152,195,121,.04); border-left-color: #98c379; }
     .project-item-info { flex: 1; min-width: 0; }
     .project-item-name {
       font: bold 12px/1.3 monospace; color: #abb2bf;
@@ -120,7 +121,12 @@
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .session-item.active-session .session-title { color: #61afef; }
-    .session-byline { font: 10px/1 monospace; color: #2e2e2e; margin: 3px 0 2px; display: flex; gap: 6px; }
+    .session-byline { font: 10px/1 monospace; color: #444; margin: 3px 0 2px; display: flex; align-items: center; gap: 6px; }
+    .session-project-tag {
+      font: 10px/1 monospace; color: #61afef; background: rgba(97,175,239,.1);
+      border: 1px solid rgba(97,175,239,.2); border-radius: 3px;
+      padding: 1px 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px;
+    }
     .session-snippet {
       font: 11px/1.4 monospace; color: #333;
       display: -webkit-box; -webkit-line-clamp: 2;
@@ -317,10 +323,11 @@
   }
 
   // ── State ──────────────────────────────────────────────────────────────────
-  let allSessions  = [];
-  let allProjects  = [];
+  let allSessions     = [];
+  let allProjects     = [];
   let activeSessionId = null;
   let activeWorkDir   = null;
+  let filterProjectPath = null;   // when set, conversations list is filtered to this project
 
   // ── Projects panel ─────────────────────────────────────────────────────────
   async function loadProjects() {
@@ -336,23 +343,34 @@
     if (!allProjects.length) { empty.style.display = 'block'; return; }
     empty.style.display = 'none';
     allProjects.forEach(p => {
-      const isActive  = activeWorkDir === p.path;
-      const item      = document.createElement('div');
-      item.className  = 'project-item' + (isActive ? ' active-project' : '');
-      item.title      = p.path;
-      item.innerHTML  = `
+      const isActive   = activeWorkDir === p.path;
+      const isFiltered = filterProjectPath === p.path && !isActive;
+      const item       = document.createElement('div');
+      item.className   = 'project-item'
+        + (isActive   ? ' active-project' : '')
+        + (isFiltered ? ' filtered'       : '');
+      item.title = p.path;
+      item.innerHTML = `
         <div class="project-item-info">
           <div class="project-item-name">${escHtml(p.name)}</div>
         </div>
         <div class="project-item-age">${relDate(p.mtime)}</div>`;
-      item.addEventListener('click', () => switchToProject(p.path));
+      item.addEventListener('click', () => onProjectClick(p.path));
       list.appendChild(item);
     });
+  }
+
+  function onProjectClick(path) {
+    // Toggle filter: clicking the same project again clears it
+    filterProjectPath = filterProjectPath === path ? null : path;
+    renderProjects();
+    applySearch();
   }
 
   async function switchToProject(workDir) {
     if (workDir === activeWorkDir) return;
     await fetch('/api/sessions/save', { method: 'POST' }).catch(() => {});
+    filterProjectPath = null;
     startNewSession({ workDir });
   }
 
@@ -365,11 +383,17 @@
   }
 
   function applySearch() {
-    const q        = document.getElementById('search-input').value.toLowerCase().trim();
-    const filtered = q
-      ? allSessions.filter(s => s.title?.toLowerCase().includes(q) || s.snippet?.toLowerCase().includes(q))
-      : allSessions;
+    const q = document.getElementById('search-input').value.toLowerCase().trim();
+    let filtered = allSessions;
+    if (filterProjectPath) filtered = filtered.filter(s => s.workDir === filterProjectPath);
+    if (q) filtered = filtered.filter(s => s.title?.toLowerCase().includes(q) || s.snippet?.toLowerCase().includes(q));
     renderSessions(filtered);
+
+    // Update conversations section label to reflect active filter
+    const label = document.querySelector('#conversations-section .section-label');
+    label.textContent = filterProjectPath
+      ? `Conversations — ${filterProjectPath.split('/').pop()}`
+      : 'Conversations';
   }
 
   function renderSessions(sessions) {
@@ -394,7 +418,7 @@
           </div>
           <div class="session-byline">
             <span>${relDate(s.timestamp)}</span>
-            ${projectName ? `<span title="${escHtml(s.workDir || '')}">${escHtml(projectName)}</span>` : ''}
+            ${projectName ? `<span class="session-project-tag" title="${escHtml(s.workDir || '')}">${escHtml(projectName)}</span>` : ''}
           </div>
           ${s.snippet ? `<div class="session-snippet">${escHtml(s.snippet)}</div>` : ''}
         </div>
@@ -417,6 +441,7 @@
     if (id === activeSessionId) return;
     if (!confirm('Switch to this conversation? Your current session will be saved first.')) return;
     await fetch('/api/sessions/save', { method: 'POST' }).catch(() => {});
+    filterProjectPath = null;
     activeSessionId = id;
     await fetch(`/api/sessions/${id}/resume`, { method: 'POST' });
   }
