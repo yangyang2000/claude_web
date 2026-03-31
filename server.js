@@ -57,6 +57,29 @@ function saveAdmins(list) {
   fs.writeFileSync(adminsPath, JSON.stringify(list, null, 2));
 }
 
+// ── Settings ──────────────────────────────────────────────────────────────────
+// settings.json: { "projectsBase": "/absolute/path" }
+// Supports leading ~ which is expanded to homedir at runtime.
+
+const settingsPath = path.join(__dirname, 'settings.json');
+let _settings = null;
+function getSettings() {
+  if (!_settings) {
+    try { _settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); }
+    catch (_) { _settings = {}; }
+  }
+  return _settings;
+}
+function saveSettings(obj) {
+  _settings = obj;
+  fs.writeFileSync(settingsPath, JSON.stringify(obj, null, 2));
+}
+function getProjectsBase() {
+  const raw = getSettings().projectsBase;
+  if (!raw) return path.join(os.homedir(), 'Documents', 'Claude_Projects');
+  return raw.startsWith('~') ? path.join(os.homedir(), raw.slice(1)) : raw;
+}
+
 // ── Shared projects ───────────────────────────────────────────────────────────
 // shared_projects.json: [{ "id": "hex", "path": "/abs/path", "name": "Label", "users": ["email@..."] }]
 
@@ -88,7 +111,7 @@ function isSharedProjectPath(workDir) {
 }
 function isAuthorizedWorkDir(email, workDir) {
   const username     = email.split('@')[0];
-  const personalBase = path.join(os.homedir(), 'Documents', 'Claude_Projects', username);
+  const personalBase = path.join(getProjectsBase(), username);
   const normalized   = path.resolve(workDir);
   if (normalized.startsWith(personalBase + path.sep) || normalized === personalBase) return true;
   return getAccessibleSharedProjects(email).some(p => path.resolve(p.path) === normalized);
@@ -149,10 +172,10 @@ function sanitizeDir(name) {
     .slice(0, 64) || null;
 }
 
-// ~/Documents/Claude_Projects/{username}/{project_name_or_id}
+// {projectsBase}/{username}/{project_name_or_id}
 function resolveWorkDir(email, id, projectName) {
   const username = email.split('@')[0];
-  const base     = path.join(os.homedir(), 'Documents', 'Claude_Projects', username);
+  const base     = path.join(getProjectsBase(), username);
   const safeName = sanitizeDir(projectName);
   if (!safeName) return path.join(base, id);
 
@@ -297,7 +320,7 @@ app.get('/me', requireAuth, (req, res) => {
 app.get('/api/projects', requireAuth, (req, res) => {
   const email    = req.user.email;
   const username = email.split('@')[0];
-  const base     = path.join(os.homedir(), 'Documents', 'Claude_Projects', username);
+  const base     = path.join(getProjectsBase(), username);
 
   let personal = [];
   try {
@@ -555,6 +578,21 @@ app.delete('/admin/api/admins/:email', requireAdmin, (req, res) => {
   if (email === SUPER_ADMIN) return res.status(403).json({ error: 'cannot remove super admin' });
   saveAdmins(getAdmins().filter(e => e !== email));
   res.json({ ok: true });
+});
+
+// Settings (super admin only)
+app.get('/admin/api/settings', requireAdmin, (req, res) => {
+  res.json({ projectsBase: getProjectsBase() });
+});
+app.put('/admin/api/settings', requireAdmin, (req, res) => {
+  if (req.user.email !== SUPER_ADMIN) return res.status(403).json({ error: 'forbidden' });
+  const { projectsBase } = req.body;
+  if (!projectsBase || typeof projectsBase !== 'string') return res.status(400).json({ error: 'projectsBase required' });
+  const trimmed  = projectsBase.trim();
+  const resolved = trimmed.startsWith('~') ? path.join(os.homedir(), trimmed.slice(1)) : trimmed;
+  if (!path.isAbsolute(resolved)) return res.status(400).json({ error: 'must be an absolute path (or start with ~)' });
+  saveSettings({ ...getSettings(), projectsBase: trimmed });
+  res.json({ ok: true, projectsBase: trimmed });
 });
 
 // Active sessions (view + kill)

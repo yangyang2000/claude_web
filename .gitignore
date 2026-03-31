@@ -4,6 +4,7 @@ users/
 whitelist.json
 admins.json
 shared_projects.json
+settings.json
 learnings.md
 todo.md
 .claude/
