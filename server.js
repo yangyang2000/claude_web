@@ -581,6 +581,105 @@ app.delete('/admin/api/admins/:email', requireAdmin, (req, res) => {
 });
 
 // Settings (super admin only)
+
+// Recursively copy a directory (fallback for cross-device moves).
+function copyDirSync(src, dest) {
+  fs.mkdirSync(dest, { recursive: true });
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const s = path.join(src, entry.name);
+    const d = path.join(dest, entry.name);
+    if (entry.isDirectory()) copyDirSync(s, d);
+    else fs.copyFileSync(s, d);
+  }
+}
+
+// Move all user project directories and update their metadata to point at newBase.
+// Returns an array of error strings (empty = full success).
+function migrateProjectsBase(oldBase, newBase) {
+  const oldResolved = path.resolve(oldBase);
+  const newResolved = path.resolve(newBase);
+  if (oldResolved === newResolved) return [];
+
+  const errors = [];
+  const moved  = new Map(); // oldAbsPath → newAbsPath, avoids double-moving
+
+  function remapPath(workDir) {
+    if (!workDir) return null;
+    const abs = path.resolve(workDir);
+    if (!abs.startsWith(oldResolved + path.sep)) return null;
+    return path.join(newResolved, path.relative(oldResolved, abs));
+  }
+
+  function moveDir(oldPath, newPath) {
+    if (moved.has(oldPath)) return moved.get(oldPath);
+    const result = (() => {
+      if (!fs.existsSync(oldPath)) return newPath; // gone already — just remap the reference
+      try {
+        fs.mkdirSync(path.dirname(newPath), { recursive: true });
+        fs.renameSync(oldPath, newPath);
+        return newPath;
+      } catch (e) {
+        if (e.code !== 'EXDEV') { errors.push(`move ${oldPath}: ${e.message}`); return null; }
+        // Cross-device: copy then delete
+        try {
+          copyDirSync(oldPath, newPath);
+          fs.rmSync(oldPath, { recursive: true, force: true });
+          return newPath;
+        } catch (e2) { errors.push(`copy ${oldPath}: ${e2.message}`); return null; }
+      }
+    })();
+    moved.set(oldPath, result);
+    return result;
+  }
+
+  const usersDir = path.join(__dirname, 'users');
+  if (!fs.existsSync(usersDir)) return errors;
+
+  for (const entry of fs.readdirSync(usersDir, { withFileTypes: true }).filter(e => e.isDirectory())) {
+    const userDir     = path.join(usersDir, entry.name);
+    const sessFile    = path.join(userDir, 'sessions.json');
+    const activeFile  = path.join(userDir, 'active.json');
+
+    // sessions.json
+    let sessions = [];
+    try { sessions = JSON.parse(fs.readFileSync(sessFile, 'utf8')); } catch (_) { continue; }
+    let changed = false;
+    sessions = sessions.map(s => {
+      const newWorkDir = remapPath(s.workDir);
+      if (!newWorkDir) return s;
+      const result = moveDir(path.resolve(s.workDir), newWorkDir);
+      if (!result) return s;
+      changed = true;
+      return { ...s, workDir: result };
+    });
+    if (changed) {
+      try { fs.writeFileSync(sessFile, JSON.stringify(sessions, null, 2)); }
+      catch (e) { errors.push(`write sessions/${entry.name}: ${e.message}`); }
+    }
+
+    // active.json
+    try {
+      const active = JSON.parse(fs.readFileSync(activeFile, 'utf8'));
+      const newWorkDir = remapPath(active?.workDir);
+      if (newWorkDir) {
+        const result = moveDir(path.resolve(active.workDir), newWorkDir);
+        if (result) {
+          active.workDir = result;
+          fs.writeFileSync(activeFile, JSON.stringify(active, null, 2));
+        }
+      }
+    } catch (_) {}
+  }
+
+  // Update any currently live in-memory sessions
+  for (const [, sess] of live) {
+    const newWorkDir = remapPath(sess.workDir);
+    if (newWorkDir) sess.workDir = newWorkDir;
+  }
+
+  return errors;
+}
+
 app.get('/admin/api/settings', requireAdmin, (req, res) => {
   res.json({ projectsBase: getProjectsBase() });
 });
@@ -591,8 +690,13 @@ app.put('/admin/api/settings', requireAdmin, (req, res) => {
   const trimmed  = projectsBase.trim();
   const resolved = trimmed.startsWith('~') ? path.join(os.homedir(), trimmed.slice(1)) : trimmed;
   if (!path.isAbsolute(resolved)) return res.status(400).json({ error: 'must be an absolute path (or start with ~)' });
+
+  const oldBase = getProjectsBase();
   saveSettings({ ...getSettings(), projectsBase: trimmed });
-  res.json({ ok: true, projectsBase: trimmed });
+  const newBase = getProjectsBase();
+
+  const warnings = migrateProjectsBase(oldBase, newBase);
+  res.json({ ok: true, projectsBase: trimmed, warnings: warnings.length ? warnings : undefined });
 });
 
 // Active sessions (view + kill)

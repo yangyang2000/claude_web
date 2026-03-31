@@ -603,7 +603,11 @@
           try {
             const result = await api('PUT', '/admin/api/settings', { projectsBase: newVal });
             el.textContent = result.projectsBase;
-            toast('Projects directory updated');
+            if (result.warnings?.length) {
+              toast(`Updated — ${result.warnings.length} move error(s); check server logs`, 'err');
+            } else {
+              toast('Projects directory updated — existing projects migrated');
+            }
           } catch(e) {
             el.textContent = currentVal;
             toast(e.message, 'err');
