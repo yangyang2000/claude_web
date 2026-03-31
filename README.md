@@ -40,6 +40,20 @@ Accessible at `/admin` by admin users. Lets you:
 
 ## Setup
 
+### Option A: Interactive setup script
+
+```bash
+git clone https://github.com/YOUR_USERNAME/claude-web.git
+cd claude-web
+./setup.sh
+```
+
+The script walks you through creating `.env`, populating `whitelist.json`, and running `npm install`. You'll still need to create a Google OAuth app first (see step 2 below).
+
+---
+
+### Option B: Manual setup
+
 ### 1. Clone and install
 
 ```bash
