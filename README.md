@@ -1,6 +1,6 @@
 # Claude Web
 
-A self-hosted web terminal for [Claude Code](https://claude.ai/code), accessible from any browser. Supports multiple users via Google OAuth, persistent sessions, and per-user project directories.
+A self-hosted web terminal for [Claude Code](https://claude.ai/code), accessible from any browser. Supports multiple users via Google OAuth, persistent sessions, per-user project directories, and an admin panel for managing users and shared projects.
 
 ## Features
 
@@ -26,6 +26,12 @@ Two buttons in the header help manage Claude's context window:
 - **/compact** — sends Claude Code's `/compact` command, which summarises the conversation into a memory file and clears the context, keeping Claude fast on long sessions
 - **refresh memory** — compacts the conversation, saves the session to history, then starts a completely fresh context window in a new session
 
+### Admin panel
+Accessible at `/admin` by admin users. Lets you:
+- **Manage the whitelist** — add or remove users who can log in
+- **Manage admins** — promote users to admin or demote them (super admin only)
+- **Shared projects** — create shared project directories that multiple users can access; click a project's name or path to edit it inline
+
 ## Prerequisites
 
 - Node.js 18+
@@ -37,8 +43,8 @@ Two buttons in the header help manage Claude's context window:
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/claude_web.git
-cd claude_web
+git clone https://github.com/YOUR_USERNAME/claude-web.git
+cd claude-web
 npm install
 ```
 
@@ -70,25 +76,26 @@ BASE_URL=http://localhost:3000
 # Generate with: openssl rand -hex 32
 SESSION_SECRET=replace-with-a-long-random-string
 
+# Your Google email — this account is the permanent super admin and cannot be removed via the UI
+SUPER_ADMIN_EMAIL=you@gmail.com
+
 # Optional: change the port (default 3000)
 # PORT=3000
 ```
 
 ### 4. Add allowed users
 
-Copy the example whitelist and add the Google email addresses of everyone who should have access:
-
 ```bash
 cp whitelist.example.json whitelist.json
 ```
 
-Edit `whitelist.json`:
+Edit `whitelist.json` with the Google email addresses of everyone who should have access:
 
 ```json
 ["you@gmail.com", "familymember@gmail.com"]
 ```
 
-Anyone not on this list will be blocked after Google login.
+Anyone not on this list will be blocked after Google login. You can also manage the whitelist at runtime via the admin panel.
 
 ### 5. Run
 
@@ -96,7 +103,7 @@ Anyone not on this list will be blocked after Google login.
 npm start
 ```
 
-Open `http://localhost:3000` in your browser.
+Open `http://localhost:3000` in your browser. The first time you log in with your `SUPER_ADMIN_EMAIL` account, you'll automatically have admin access.
 
 ## Project storage
 
@@ -219,10 +226,10 @@ After=network.target
 
 [Service]
 User=YOUR_USERNAME
-WorkingDirectory=/path/to/claude_web
+WorkingDirectory=/path/to/claude-web
 ExecStart=/usr/bin/node server.js
 Restart=on-failure
-EnvironmentFile=/path/to/claude_web/.env
+EnvironmentFile=/path/to/claude-web/.env
 
 [Install]
 WantedBy=multi-user.target

@@ -40,7 +40,7 @@ function saveWhitelist(list) {
 // ── Admins ────────────────────────────────────────────────────────────────────
 // admins.json: array of email strings. SUPER_ADMIN can never be removed via UI.
 
-const SUPER_ADMIN = 'yangyang2000@gmail.com';
+const SUPER_ADMIN = process.env.SUPER_ADMIN_EMAIL;
 const adminsPath  = path.join(__dirname, 'admins.json');
 if (!fs.existsSync(adminsPath)) fs.writeFileSync(adminsPath, JSON.stringify([SUPER_ADMIN], null, 2));
 

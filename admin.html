@@ -91,8 +91,14 @@
     /* ── Shared project expanded editor ── */
     .sp-row { flex-direction: column; align-items: stretch; gap: 0; }
     .sp-row-top { display: flex; align-items: center; gap: 8px; }
-    .sp-name { font: bold 12px/1 monospace; color: #abb2bf; }
-    .sp-path { font: 10px/1 monospace; color: #333; margin-top: 3px; }
+    .sp-name { font: bold 12px/1 monospace; color: #abb2bf; cursor: text; }
+    .sp-path { font: 10px/1 monospace; color: #555; margin-top: 3px; cursor: text; }
+    .sp-name:hover, .sp-path:hover { color: #abb2bf; }
+    .sp-inline-input {
+      background: #161616; border: 1px solid #444; border-radius: 3px;
+      padding: 2px 6px; color: #abb2bf; outline: none;
+      font: inherit; width: 100%; box-sizing: border-box;
+    }
     .sp-users { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
     .sp-user-chip {
       display: inline-flex; align-items: center; gap: 4px;
@@ -339,8 +345,8 @@
       row.innerHTML = `
         <div class="sp-row-top">
           <div class="row-main">
-            <div class="sp-name">${escHtml(name)}</div>
-            <div class="sp-path">${escHtml(p.path)}</div>
+            <div class="sp-name" title="Click to edit name">${escHtml(name)}</div>
+            <div class="sp-path" title="Click to edit path">${escHtml(p.path)}</div>
           </div>
           <button class="btn danger sp-delete-btn">delete</button>
         </div>
@@ -358,6 +364,39 @@
       row.querySelectorAll('.sp-user-chip button').forEach(btn => {
         btn.addEventListener('click', () => removeUserFromProject(p, btn.dataset.user));
       });
+
+      // Inline edit for name and path
+      function makeInlineEditable(el, field, currentVal) {
+        el.addEventListener('click', () => {
+          if (el.querySelector('input')) return;
+          const input = document.createElement('input');
+          input.className = 'sp-inline-input';
+          input.value = currentVal;
+          el.textContent = '';
+          el.appendChild(input);
+          input.focus();
+          input.select();
+          async function save() {
+            const newVal = input.value.trim();
+            if (newVal && newVal !== currentVal) {
+              try {
+                await api('PUT', `/admin/api/shared-projects/${p.id}`, { ...p, [field]: newVal });
+                toast(`Updated ${field}`);
+                await loadSharedProjects();
+              } catch(e) { toast(e.message, 'err'); }
+            } else {
+              el.textContent = currentVal;
+            }
+          }
+          input.addEventListener('blur', save);
+          input.addEventListener('keydown', e => {
+            if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+            if (e.key === 'Escape') { input.removeEventListener('blur', save); el.textContent = currentVal; }
+          });
+        });
+      }
+      makeInlineEditable(row.querySelector('.sp-name'), 'name', p.name || '');
+      makeInlineEditable(row.querySelector('.sp-path'), 'path', p.path);
       ul.appendChild(row);
     });
   }
