@@ -974,17 +974,27 @@
 
   function appendSimpleOutput(raw) {
     const stripped = stripAnsi(raw);
-    for (let i = 0; i < stripped.length; i++) {
+    let i = 0;
+    while (i < stripped.length) {
       const ch = stripped[i];
-      if (ch === '\n') {
+      if (ch === '\r' && stripped[i + 1] === '\n') {
+        // \r\n (PTY newline) — treat as single newline
         simpleLines.push(simpleCurrentLine);
         simpleCurrentLine = '';
+        i += 2;
+      } else if (ch === '\n') {
+        simpleLines.push(simpleCurrentLine);
+        simpleCurrentLine = '';
+        i++;
       } else if (ch === '\r') {
-        simpleCurrentLine = '';   // cursor-to-line-start: overwrite in-progress line
+        // bare \r — cursor-to-line-start (progress/spinner overwrite)
+        simpleCurrentLine = '';
+        i++;
       } else if (ch < ' ' && ch !== '\t') {
-        // skip other control chars (bell, etc.)
+        i++;
       } else {
         simpleCurrentLine += ch;
+        i++;
       }
     }
     const out = document.getElementById('simple-output');
