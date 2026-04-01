@@ -248,7 +248,7 @@ function startSession(user, sessionId, opts = {}) {
   delete ptyEnv.GOOGLE_CLIENT_ID;
   delete ptyEnv.GOOGLE_CLIENT_SECRET;
 
-  const ptyProcess = pty.spawn('claude', [], {
+  const ptyProcess = pty.spawn(process.env.CLAUDE_PATH || 'claude', [], {
     name: 'xterm-256color', cols: 220, rows: 50, cwd: workDir, env: ptyEnv,
   });
 
@@ -696,7 +696,7 @@ app.put('/admin/api/settings', requireAdmin, (req, res) => {
   const newBase = getProjectsBase();
 
   const warnings = migrateProjectsBase(oldBase, newBase);
-  res.json({ ok: true, projectsBase: trimmed, warnings: warnings.length ? warnings : undefined });
+  res.json({ ok: true, projectsBase: newBase, warnings: warnings.length ? warnings : undefined });
 });
 
 // Active sessions (view + kill)
@@ -802,5 +802,7 @@ function shutdown(signal) {
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT',  () => shutdown('SIGINT'));
+process.on('SIGHUP',  () => shutdown('SIGHUP'));
+process.on('exit',    () => { for (const [email] of live) killSession(email); });
 
 server.listen(PORT, () => console.log(`Claude Code Web Terminal → ${BASE_URL}`));

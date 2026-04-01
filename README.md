@@ -35,17 +35,31 @@ Accessible at `/admin` by admin users. Lets you:
 ## Prerequisites
 
 - Node.js 18+
-- [Claude Code CLI](https://claude.ai/code) installed and authenticated (`claude` must be on your PATH)
+- [Claude Code CLI](https://claude.ai/code) installed and authenticated
 - A Google account (for OAuth setup)
+
+**Platform notes:**
+
+- **Linux** — no extra steps. Make sure `claude` is on your PATH.
+- **Mac** — `node-pty` requires Xcode CLI tools: `xcode-select --install`. If `~/Documents` is synced to iCloud, consider changing the projects directory in the admin Settings panel to avoid sync conflicts (e.g. `~/claude-projects`).
+- **Windows** — `node-pty` requires C++ build tools. Run `npm install -g windows-build-tools` (as Administrator) before `npm install`. If `claude` isn't available in a PTY environment, set `CLAUDE_PATH` in `.env` to its full path (e.g. `C:\Users\you\AppData\Roaming\npm\claude.cmd`).
 
 ## Setup
 
 ### Option A: Interactive setup script
 
+**Linux / Mac:**
 ```bash
 git clone https://github.com/YOUR_USERNAME/claude-web.git
 cd claude-web
 ./setup.sh
+```
+
+**Windows (PowerShell):**
+```powershell
+git clone https://github.com/YOUR_USERNAME/claude-web.git
+cd claude-web
+powershell -ExecutionPolicy Bypass -File setup.ps1
 ```
 
 The script walks you through creating `.env`, populating `whitelist.json`, and running `npm install`. You'll still need to create a Google OAuth app first (see step 2 below).
@@ -227,7 +241,7 @@ Copy the `https://...ngrok-free.app` URL into `BASE_URL` and the Google OAuth re
 
 ## Running as a service (optional)
 
-To keep it running after you close your terminal, create a systemd service:
+### Linux — systemd
 
 ```bash
 sudo nano /etc/systemd/system/claude-web.service
@@ -252,3 +266,67 @@ WantedBy=multi-user.target
 ```bash
 sudo systemctl enable --now claude-web
 ```
+
+---
+
+### Mac — launchd
+
+Create `~/Library/LaunchAgents/com.claude-web.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.claude-web</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/node</string>
+    <string>/path/to/claude-web/server.js</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/path/to/claude-web</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/YOUR_USERNAME</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/tmp/claude-web.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/claude-web.log</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+</dict>
+</plist>
+```
+
+> Note: launchd doesn't load `.env` automatically. Either hardcode env vars in the `EnvironmentVariables` dict, or prefix the `node` call with a wrapper script that sources `.env` first.
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.claude-web.plist
+```
+
+---
+
+### Windows — NSSM
+
+[NSSM](https://nssm.cc) (Non-Sucking Service Manager) wraps any executable as a Windows service.
+
+```powershell
+# Install NSSM (e.g. via Chocolatey)
+choco install nssm
+
+# Register the service (run as Administrator)
+nssm install claude-web "C:\Program Files\nodejs\node.exe" "C:\path\to\claude-web\server.js"
+nssm set claude-web AppDirectory "C:\path\to\claude-web"
+nssm set claude-web AppEnvironmentExtra "NODE_ENV=production"
+
+# Start it
+nssm start claude-web
+```
+
+Environment variables from `.env` are loaded automatically by the app via `dotenv`.
