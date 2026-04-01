@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Claude Code</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
@@ -263,6 +264,61 @@
     }
     #file-content-body::-webkit-scrollbar { width: 3px; height: 3px; }
     #file-content-body::-webkit-scrollbar-thumb { background: #222; border-radius: 2px; }
+
+    /* ── Notebook renderer ── */
+    #file-content-body.notebook { white-space: normal; word-break: normal; padding: 12px 14px; }
+    .nb-cell { margin-bottom: 12px; border-radius: 4px; overflow: hidden; }
+    .nb-cell-in { display: flex; align-items: stretch; }
+    .nb-gutter { font: 9px/1 monospace; color: #3e4452; padding: 6px 6px 6px 0; min-width: 46px; text-align: right; flex-shrink: 0; }
+    .nb-source {
+      flex: 1; background: #23272e; border: 1px solid #2a2e36; border-radius: 3px;
+      padding: 6px 8px; font: 11px/1.6 "Cascadia Code","Fira Code",monospace;
+      color: #abb2bf; white-space: pre-wrap; word-break: break-all; tab-size: 2; overflow-x: auto;
+    }
+    .nb-cell-markdown .nb-source {
+      background: transparent; border-color: transparent;
+      color: #abb2bf; font: 13px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    }
+    .nb-cell-markdown .nb-source h1,
+    .nb-cell-markdown .nb-source h2,
+    .nb-cell-markdown .nb-source h3 { color: #e5c07b; font-weight: bold; margin: .4em 0 .2em; }
+    .nb-cell-markdown .nb-source h1 { font-size: 1.4em; }
+    .nb-cell-markdown .nb-source h2 { font-size: 1.2em; }
+    .nb-cell-markdown .nb-source h3 { font-size: 1.05em; }
+    .nb-cell-markdown .nb-source p { margin: .3em 0; }
+    .nb-cell-markdown .nb-source ul,
+    .nb-cell-markdown .nb-source ol { padding-left: 1.4em; margin: .3em 0; }
+    .nb-cell-markdown .nb-source code {
+      font: 11px/1.5 "Cascadia Code","Fira Code",monospace;
+      background: #23272e; border-radius: 3px; padding: 1px 4px; color: #98c379;
+    }
+    .nb-cell-markdown .nb-source pre {
+      background: #23272e; border-radius: 3px; padding: 8px; overflow-x: auto; margin: .4em 0;
+    }
+    .nb-cell-markdown .nb-source pre code { background: none; padding: 0; }
+    .nb-cell-markdown .nb-source a { color: #61afef; }
+    .nb-cell-markdown .nb-source strong { color: #e5c07b; }
+    .nb-cell-markdown .nb-source em { color: #c678dd; }
+    .nb-cell-markdown .nb-source blockquote {
+      border-left: 3px solid #3e4452; padding-left: 8px; margin: .3em 0; color: #5c6370;
+    }
+    .nb-cell-markdown .nb-source hr { border: none; border-top: 1px solid #2a2e36; margin: .6em 0; }
+    .nb-outputs { margin-left: 46px; }
+    .nb-output { padding: 4px 0 2px; }
+    .nb-output-text {
+      font: 11px/1.6 "Cascadia Code","Fira Code",monospace;
+      color: #98c379; white-space: pre-wrap; word-break: break-all;
+    }
+    .nb-output-text.stderr { color: #e06c75; }
+    .nb-output-result {
+      font: 11px/1.6 "Cascadia Code","Fira Code",monospace;
+      color: #d19a66; white-space: pre-wrap; word-break: break-all;
+    }
+    .nb-output-error {
+      font: 11px/1.6 "Cascadia Code","Fira Code",monospace;
+      color: #e06c75; white-space: pre-wrap; word-break: break-all;
+    }
+    .nb-output img { max-width: 100%; border-radius: 3px; }
 
     /* ── Simple view ── */
     #simple-view {
@@ -943,25 +999,138 @@
     document.getElementById('file-tree').classList.remove('split');
   }
 
+  function stripAnsi(s) {
+    return s.replace(/\x1b\[[0-9;]*[mGKHF]/g, '');
+  }
+
+  function renderNotebook(content) {
+    const body = document.getElementById('file-content-body');
+    body.classList.add('notebook');
+    body.innerHTML = '';
+    let nb;
+    try { nb = JSON.parse(content); } catch { body.textContent = 'Invalid notebook JSON.'; return; }
+    const cells = nb.cells || nb.worksheets?.[0]?.cells || [];
+
+    for (const cell of cells) {
+      const source = Array.isArray(cell.source) ? cell.source.join('') : (cell.source || '');
+      const cellEl = document.createElement('div');
+      cellEl.className = `nb-cell nb-cell-${cell.cell_type}`;
+
+      // Input row
+      const inRow = document.createElement('div');
+      inRow.className = 'nb-cell-in';
+
+      const gutter = document.createElement('div');
+      gutter.className = 'nb-gutter';
+      if (cell.cell_type === 'code') {
+        const n = cell.execution_count;
+        gutter.textContent = n != null ? `[${n}]:` : '[ ]:';
+      }
+
+      const src = document.createElement('div');
+      src.className = 'nb-source';
+      if (cell.cell_type === 'markdown' && typeof marked !== 'undefined') {
+        src.innerHTML = marked.parse(source);
+      } else {
+        src.textContent = source;
+      }
+
+      inRow.appendChild(gutter);
+      inRow.appendChild(src);
+      cellEl.appendChild(inRow);
+
+      // Outputs (code cells only)
+      const outputs = cell.outputs || [];
+      if (outputs.length) {
+        const outsEl = document.createElement('div');
+        outsEl.className = 'nb-outputs';
+
+        for (const out of outputs) {
+          const outEl = document.createElement('div');
+          outEl.className = 'nb-output';
+
+          if (out.output_type === 'stream') {
+            const text = Array.isArray(out.text) ? out.text.join('') : (out.text || '');
+            const pre = document.createElement('pre');
+            pre.className = `nb-output-text${out.name === 'stderr' ? ' stderr' : ''}`;
+            pre.textContent = text;
+            outEl.appendChild(pre);
+
+          } else if (out.output_type === 'display_data' || out.output_type === 'execute_result') {
+            const data = out.data || {};
+            if (data['image/png']) {
+              const img = document.createElement('img');
+              img.src = `data:image/png;base64,${data['image/png'].replace(/\n/g, '')}`;
+              outEl.appendChild(img);
+            } else if (data['image/jpeg']) {
+              const img = document.createElement('img');
+              img.src = `data:image/jpeg;base64,${data['image/jpeg'].replace(/\n/g, '')}`;
+              outEl.appendChild(img);
+            } else if (data['image/svg+xml']) {
+              const svg = Array.isArray(data['image/svg+xml']) ? data['image/svg+xml'].join('') : data['image/svg+xml'];
+              const div = document.createElement('div');
+              div.style.cssText = 'max-width:100%;overflow:auto';
+              div.innerHTML = svg;
+              outEl.appendChild(div);
+            } else if (data['text/plain']) {
+              const text = Array.isArray(data['text/plain']) ? data['text/plain'].join('') : data['text/plain'];
+              const pre = document.createElement('pre');
+              pre.className = 'nb-output-result';
+              pre.textContent = text;
+              if (out.output_type === 'execute_result') {
+                const outGutter = document.createElement('div');
+                outGutter.style.cssText = 'font:9px/1 monospace;color:#3e4452;padding:4px 6px 0 0;min-width:46px;text-align:right;float:left';
+                const n = out.execution_count;
+                outGutter.textContent = n != null ? `[${n}]:` : '[ ]:';
+                outEl.appendChild(outGutter);
+              }
+              outEl.appendChild(pre);
+            }
+
+          } else if (out.output_type === 'error') {
+            const tb = (out.traceback || []).map(stripAnsi).join('\n');
+            const pre = document.createElement('pre');
+            pre.className = 'nb-output-error';
+            pre.textContent = tb || `${out.ename}: ${out.evalue}`;
+            outEl.appendChild(pre);
+          }
+
+          outsEl.appendChild(outEl);
+        }
+        cellEl.appendChild(outsEl);
+      }
+
+      body.appendChild(cellEl);
+    }
+  }
+
   async function openFile(filePath) {
     const name = filePath.split('/').pop();
+    const body = document.getElementById('file-content-body');
     document.getElementById('file-content-name').textContent = name;
     document.getElementById('file-content-name').title = filePath.replace(/^\/home\/[^/]+/, '~');
     document.getElementById('file-content-warning').textContent = '';
-    document.getElementById('file-content-body').textContent = 'Loading…';
+    body.classList.remove('notebook');
+    body.innerHTML = '';
+    body.textContent = 'Loading…';
     fileContentPane.classList.add('open');
     document.getElementById('file-tree').classList.add('split');
     try {
       const r    = await fetch(`/api/file?path=${encodeURIComponent(filePath)}`);
       const data = await r.json();
       if (!r.ok) throw new Error(data.error);
-      document.getElementById('file-content-body').textContent = data.content;
+      if (name.endsWith('.ipynb')) {
+        renderNotebook(data.content);
+      } else {
+        body.textContent = data.content;
+      }
       if (data.truncated) {
         const mb = (data.size / 1024 / 1024).toFixed(1);
         document.getElementById('file-content-warning').textContent = `truncated (${mb} MB)`;
       }
     } catch (e) {
-      document.getElementById('file-content-body').textContent = `Error: ${e.message}`;
+      body.classList.remove('notebook');
+      body.textContent = `Error: ${e.message}`;
     }
   }
 
