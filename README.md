@@ -30,6 +30,48 @@ Accessible at `/admin` by admin users. Lets you:
 - **Manage admins** — promote users to admin or demote them (super admin only)
 - **Shared projects** — create shared project directories that multiple users can access; click a project's name or path to edit it inline
 
+## Architecture
+
+Claude Web is a single Node.js server (`server.js`) with no build step. The browser connects over WebSocket; the server runs the `claude` CLI in a pseudo-terminal (PTY) and streams I/O between them.
+
+```
+Browser
+  ├── HTTP (Express)   — pages, OAuth, REST API
+  └── WebSocket        — real-time terminal I/O
+          └── node-pty — runs claude in a PTY
+                  └── claude CLI
+```
+
+**Auth** — Passport.js with Google OAuth 2.0. The user's email is checked against `whitelist.json` on login. WebSocket upgrades manually re-run the session parser since Passport doesn't cover the upgrade path.
+
+**PTY sessions** — one `node-pty` process per user, stored in a `Map` keyed by email. Each entry holds the process, a 200 KB output ring buffer (replayed to reconnecting clients), a set of active WebSocket clients (multiple tabs share one PTY), and an idle kill timer (2 hr).
+
+**Persistence** — two files per user under `users/<email>/`: `sessions.json` (up to 100 past sessions with title, snippet, timestamp, and working directory) and `active.json` (current session ID and working directory, used to resume after a server restart).
+
+**Project directories** — each session runs `claude` in a dedicated folder. The root is configurable via `settings.json` (default `~/Documents/Claude_Projects`); each user gets a subfolder by their Google username, and each project gets a subfolder within that.
+
+**Admin API** — routes under `/admin/api/` manage `whitelist.json`, `admins.json`, `shared_projects.json`, and `settings.json`. The super admin (`SUPER_ADMIN_EMAIL`) has exclusive control over admin promotion and server-wide settings.
+
+**Frontend** (`public/index.html`) — a single HTML file using xterm.js for the terminal and plain JS for the WebSocket client and session history sidebar. No framework, no build step.
+
+### WebSocket messages
+
+| Direction | Type | Meaning |
+|---|---|---|
+| client → server | `input` | Keystrokes to write to PTY |
+| client → server | `resize` | Terminal dimensions changed |
+| server → client | `output` | Raw terminal output |
+| server → client | `meta` | Session started or resumed (includes `sessionId`, `workDir`) |
+| server → client | `exit` | PTY process exited |
+
+### Session lifecycle
+
+On each new WebSocket connection the server checks: is there a live PTY for this user? If yes, replay the buffer and attach. If no, check `active.json` — if the working directory still exists on disk, resume there; otherwise start a fresh session with a new ID and project directory.
+
+`POST /session/refresh` is the one complex flow: it writes `/compact\r` to the PTY, waits for output to settle (500 ms debounce, 20 s hard timeout), snapshots the pre-compact buffer for the session title, saves to history, then starts a fresh session in the same working directory.
+
+---
+
 ## Prerequisites
 
 - Node.js 18+
