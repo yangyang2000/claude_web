@@ -211,11 +211,67 @@
     #terminal-container { flex: 1; padding: 8px; overflow: hidden; }
     .xterm { height: 100%; }
     .xterm-viewport { overflow-y: auto !important; }
+
+    /* ── File tree panel ── */
+    #file-panel {
+      width: 240px; min-width: 240px; flex-shrink: 0;
+      background: #0d0d0d; border-left: 1px solid #222;
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    #file-panel.collapsed { display: none; }
+    #file-panel-head {
+      padding: 10px 10px 7px; display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+    }
+    #file-tree { flex: 1; overflow-y: auto; padding: 0 0 8px; }
+    #file-tree::-webkit-scrollbar { width: 3px; }
+    #file-tree::-webkit-scrollbar-thumb { background: #222; border-radius: 2px; }
+
+    .tree-node { user-select: none; }
+    .tree-row {
+      display: flex; align-items: center; gap: 4px;
+      padding: 3px 8px; cursor: pointer; white-space: nowrap;
+      overflow: hidden; font: 11px/1.4 monospace; color: #555;
+      border-left: 2px solid transparent;
+    }
+    .tree-row:hover { background: #111; color: #abb2bf; }
+    .tree-row.tree-file:hover { border-left-color: #61afef; }
+    .tree-icon { flex-shrink: 0; font-size: 10px; color: #333; width: 12px; text-align: center; }
+    .tree-name { overflow: hidden; text-overflow: ellipsis; }
+    .tree-name.dotfile { color: #333; }
+    .tree-row:hover .tree-name.dotfile { color: #666; }
+    .tree-children { padding-left: 12px; }
+    .tree-loading { padding: 3px 8px 3px 20px; font: 10px/1 monospace; color: #2e2e2e; }
+    #file-tree-empty { padding: 14px 12px; font: 11px/1.5 monospace; color: #2e2e2e; }
+
+    /* ── File viewer modal ── */
+    #file-viewer {
+      position: fixed; inset: 0; background: rgba(0,0,0,.8);
+      display: flex; align-items: center; justify-content: center; z-index: 100;
+    }
+    #file-viewer-box {
+      background: #111; border: 1px solid #2a2a2a; border-radius: 8px;
+      width: 780px; max-width: 92vw; height: 75vh;
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    #file-viewer-header {
+      padding: 10px 14px; border-bottom: 1px solid #1e1e1e;
+      display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+    }
+    #file-viewer-path { flex: 1; font: 11px/1 monospace; color: #555; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #file-viewer-warning { font: 10px/1 monospace; color: #d19a66; flex-shrink: 0; }
+    #file-viewer-content {
+      flex: 1; overflow: auto; padding: 14px 16px;
+      font: 12px/1.6 "Cascadia Code", "Fira Code", monospace;
+      color: #abb2bf; white-space: pre; tab-size: 2;
+    }
+    #file-viewer-content::-webkit-scrollbar { width: 5px; height: 5px; }
+    #file-viewer-content::-webkit-scrollbar-thumb { background: #222; border-radius: 2px; }
   </style>
 </head>
 <body>
   <div id="header">
     <button class="btn muted" id="panel-toggle" title="Toggle panel">≡</button>
+    <button class="btn muted" id="file-panel-toggle" title="Toggle file browser">⊞</button>
     <span class="brand">Claude</span>
     <div id="status" class="disconnected">● disconnected</div>
     <span id="session-badge">resumed</span>
@@ -265,6 +321,29 @@
     <!-- Terminal -->
     <div id="main">
       <div id="terminal-container"></div>
+    </div>
+
+    <!-- File tree panel -->
+    <div id="file-panel" class="collapsed">
+      <div id="file-panel-head">
+        <span class="section-label">Files</span>
+        <button class="btn muted" id="file-refresh-btn" title="Refresh">↻</button>
+      </div>
+      <div id="file-tree">
+        <div id="file-tree-empty">No active session.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- File viewer modal -->
+  <div id="file-viewer" style="display:none">
+    <div id="file-viewer-box">
+      <div id="file-viewer-header">
+        <span id="file-viewer-path"></span>
+        <span id="file-viewer-warning"></span>
+        <button class="btn muted" id="file-viewer-close">✕</button>
+      </div>
+      <div id="file-viewer-content"></div>
     </div>
   </div>
 
@@ -548,7 +627,7 @@
       } else if (msg.type === 'meta') {
         badgeEl.className = msg.resumed ? 'resumed' : '';
         if (msg.sessionId) activeSessionId = msg.sessionId;
-        if (msg.workDir)   { activeWorkDir = msg.workDir; renderProjects(); }
+        if (msg.workDir)   { activeWorkDir = msg.workDir; renderProjects(); if (!filePanel.classList.contains('collapsed')) { expandedDirs.clear(); renderTree(); } }
         if (msg.restarted) {
           term.clear(); setRefreshState(false);
           loadSessions(); loadProjects();
@@ -668,6 +747,142 @@
   document.getElementById('project-modal-close').addEventListener('click', closeProjectModal);
   document.getElementById('project-cancel-btn').addEventListener('click', closeProjectModal);
   document.getElementById('project-open-btn').addEventListener('click', confirmProject);
+
+  // ── File tree ──────────────────────────────────────────────────────────────
+  const filePanel       = document.getElementById('file-panel');
+  const filePanelToggle = document.getElementById('file-panel-toggle');
+  const fileTree        = document.getElementById('file-tree');
+  const fileTreeEmpty   = document.getElementById('file-tree-empty');
+  let fileTreeRoot      = null;   // current workDir being browsed
+  let expandedDirs      = new Set();
+  let fileRefreshTimer  = null;
+
+  filePanelToggle.addEventListener('click', () => {
+    const open = filePanel.classList.toggle('collapsed');
+    filePanelToggle.classList.toggle('active-btn', !filePanel.classList.contains('collapsed'));
+    fitAddon.fit(); sendResize();
+    if (!filePanel.classList.contains('collapsed')) {
+      if (activeWorkDir) renderTree();
+      startFileAutoRefresh();
+    } else {
+      stopFileAutoRefresh();
+    }
+  });
+
+  document.getElementById('file-refresh-btn').addEventListener('click', renderTree);
+
+  function startFileAutoRefresh() {
+    stopFileAutoRefresh();
+    fileRefreshTimer = setInterval(() => { if (activeWorkDir) renderTree(); }, 15000);
+  }
+  function stopFileAutoRefresh() {
+    clearInterval(fileRefreshTimer); fileRefreshTimer = null;
+  }
+
+  async function fetchDir(dir) {
+    const r = await fetch(`/api/filetree?path=${encodeURIComponent(dir)}`);
+    if (!r.ok) throw new Error((await r.json()).error);
+    return (await r.json()).entries;
+  }
+
+  async function renderTree() {
+    if (!activeWorkDir) return;
+    fileTreeRoot = activeWorkDir;
+    fileTreeEmpty.style.display = 'none';
+    fileTree.innerHTML = '';
+    fileTree.appendChild(fileTreeEmpty);
+    try {
+      const entries = await fetchDir(fileTreeRoot);
+      if (!entries.length) { fileTreeEmpty.textContent = 'Project is empty.'; fileTreeEmpty.style.display = 'block'; return; }
+      for (const entry of entries) {
+        fileTree.insertBefore(buildNode(entry, 0), fileTreeEmpty);
+      }
+    } catch (e) {
+      fileTreeEmpty.textContent = `Error: ${e.message}`; fileTreeEmpty.style.display = 'block';
+    }
+  }
+
+  function buildNode(entry, depth) {
+    const node = document.createElement('div');
+    node.className = 'tree-node';
+
+    const row = document.createElement('div');
+    const isDotfile = entry.name.startsWith('.');
+    row.className = 'tree-row ' + (entry.type === 'dir' ? 'tree-dir' : 'tree-file');
+    row.innerHTML = `
+      <span class="tree-icon">${entry.type === 'dir' ? (expandedDirs.has(entry.path) ? '▾' : '▸') : ''}</span>
+      <span class="tree-name${isDotfile ? ' dotfile' : ''}">${escHtml(entry.name)}</span>`;
+    node.appendChild(row);
+
+    if (entry.type === 'dir') {
+      const children = document.createElement('div');
+      children.className = 'tree-children';
+      children.style.display = expandedDirs.has(entry.path) ? 'block' : 'none';
+      node.appendChild(children);
+
+      if (expandedDirs.has(entry.path)) loadChildren(entry.path, children);
+
+      row.addEventListener('click', async () => {
+        const open = expandedDirs.has(entry.path);
+        if (open) {
+          expandedDirs.delete(entry.path);
+          children.style.display = 'none';
+          row.querySelector('.tree-icon').textContent = '▸';
+        } else {
+          expandedDirs.add(entry.path);
+          children.style.display = 'block';
+          row.querySelector('.tree-icon').textContent = '▾';
+          loadChildren(entry.path, children);
+        }
+      });
+    } else {
+      row.addEventListener('click', () => openFile(entry.path));
+    }
+
+    return node;
+  }
+
+  async function loadChildren(dir, container) {
+    container.innerHTML = '<div class="tree-loading">loading…</div>';
+    try {
+      const entries = await fetchDir(dir);
+      container.innerHTML = '';
+      if (!entries.length) {
+        container.innerHTML = '<div class="tree-loading">empty</div>';
+      } else {
+        entries.forEach(e => container.appendChild(buildNode(e, 0)));
+      }
+    } catch (e) {
+      container.innerHTML = `<div class="tree-loading">error: ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  async function openFile(filePath) {
+    const shortPath = filePath.replace(/^\/home\/[^/]+/, '~');
+    document.getElementById('file-viewer-path').textContent = shortPath;
+    document.getElementById('file-viewer-warning').textContent = '';
+    document.getElementById('file-viewer-content').textContent = 'Loading…';
+    document.getElementById('file-viewer').style.display = 'flex';
+    try {
+      const r    = await fetch(`/api/file?path=${encodeURIComponent(filePath)}`);
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error);
+      document.getElementById('file-viewer-content').textContent = data.content;
+      if (data.truncated) {
+        const kb = Math.round(data.size / 1024);
+        document.getElementById('file-viewer-warning').textContent = `showing first 200 KB of ${kb} KB file`;
+      }
+    } catch (e) {
+      document.getElementById('file-viewer-content').textContent = `Error: ${e.message}`;
+    }
+  }
+
+  document.getElementById('file-viewer-close').addEventListener('click', () => {
+    document.getElementById('file-viewer').style.display = 'none';
+  });
+  document.getElementById('file-viewer').addEventListener('click', e => {
+    if (e.target === document.getElementById('file-viewer')) document.getElementById('file-viewer').style.display = 'none';
+  });
 
   // ── Resize ─────────────────────────────────────────────────────────────────
   new ResizeObserver(() => { fitAddon.fit(); sendResize(); })

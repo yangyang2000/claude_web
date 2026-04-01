@@ -120,6 +120,15 @@ function isAuthorizedWorkDir(email, workDir) {
   if (normalized.startsWith(personalBase + path.sep) || normalized === personalBase) return true;
   return getAccessibleSharedProjects(email).some(p => path.resolve(p.path) === normalized);
 }
+function isAuthorizedPath(email, absPath) {
+  const username     = email.split('@')[0];
+  const personalBase = path.join(getProjectsBase(), username);
+  if (absPath.startsWith(personalBase + path.sep) || absPath === personalBase) return true;
+  return getAccessibleSharedProjects(email).some(p => {
+    const sp = path.resolve(p.path);
+    return absPath.startsWith(sp + path.sep) || absPath === sp;
+  });
+}
 
 // ── Express + Auth ────────────────────────────────────────────────────────────
 
@@ -492,6 +501,45 @@ app.post('/session/refresh', requireAuth, (req, res) => {
     settleTimer = setTimeout(doRestart, SETTLE_MS);
   });
   hardTimer = setTimeout(doRestart, TIMEOUT_MS);
+});
+
+// ── File browser ─────────────────────────────────────────────────────────────
+
+app.get('/api/filetree', requireAuth, (req, res) => {
+  const email   = req.user.email;
+  const dir     = req.query.path;
+  if (!dir) return res.status(400).json({ error: 'path required' });
+  const resolved = path.resolve(dir);
+  if (!isAuthorizedPath(email, resolved)) return res.status(403).json({ error: 'not authorized' });
+  try {
+    const entries = fs.readdirSync(resolved, { withFileTypes: true })
+      .sort((a, b) => {
+        if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      })
+      .map(e => ({ name: e.name, type: e.isDirectory() ? 'dir' : 'file', path: path.join(resolved, e.name) }));
+    res.json({ entries });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+const FILE_READ_LIMIT = 200_000;
+app.get('/api/file', requireAuth, (req, res) => {
+  const email    = req.user.email;
+  const filePath = req.query.path;
+  if (!filePath) return res.status(400).json({ error: 'path required' });
+  const resolved = path.resolve(filePath);
+  if (!isAuthorizedPath(email, resolved)) return res.status(403).json({ error: 'not authorized' });
+  try {
+    const stat = fs.statSync(resolved);
+    if (stat.isDirectory()) return res.status(400).json({ error: 'is a directory' });
+    const size      = stat.size;
+    const readSize  = Math.min(size, FILE_READ_LIMIT);
+    const buf       = Buffer.alloc(readSize);
+    const fd        = fs.openSync(resolved, 'r');
+    fs.readSync(fd, buf, 0, readSize, 0);
+    fs.closeSync(fd);
+    res.json({ content: buf.toString('utf8'), size, truncated: size > FILE_READ_LIMIT });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Admin routes ─────────────────────────────────────────────────────────────
