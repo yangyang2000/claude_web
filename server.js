@@ -522,7 +522,11 @@ app.get('/api/filetree', requireAuth, (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-const FILE_READ_LIMIT = 200_000;
+const DEFAULT_FILE_READ_LIMIT_MB = 5;
+function getFileReadLimit() {
+  const mb = getSettings().fileReadLimitMb;
+  return (typeof mb === 'number' && mb > 0 ? mb : DEFAULT_FILE_READ_LIMIT_MB) * 1024 * 1024;
+}
 app.get('/api/file', requireAuth, (req, res) => {
   const email    = req.user.email;
   const filePath = req.query.path;
@@ -532,13 +536,14 @@ app.get('/api/file', requireAuth, (req, res) => {
   try {
     const stat = fs.statSync(resolved);
     if (stat.isDirectory()) return res.status(400).json({ error: 'is a directory' });
+    const limit     = getFileReadLimit();
     const size      = stat.size;
-    const readSize  = Math.min(size, FILE_READ_LIMIT);
+    const readSize  = Math.min(size, limit);
     const buf       = Buffer.alloc(readSize);
     const fd        = fs.openSync(resolved, 'r');
     fs.readSync(fd, buf, 0, readSize, 0);
     fs.closeSync(fd);
-    res.json({ content: buf.toString('utf8'), size, truncated: size > FILE_READ_LIMIT });
+    res.json({ content: buf.toString('utf8'), size, truncated: size > limit });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -733,15 +738,17 @@ function migrateProjectsBase(oldBase, newBase) {
 }
 
 app.get('/admin/api/settings', requireAdmin, (req, res) => {
-  const h = getSettings().idleTimeoutHours;
+  const h  = getSettings().idleTimeoutHours;
+  const mb = getSettings().fileReadLimitMb;
   res.json({
-    projectsBase:     getProjectsBase(),
-    idleTimeoutHours: typeof h === 'number' && h > 0 ? h : DEFAULT_IDLE_TIMEOUT_HOURS,
+    projectsBase:      getProjectsBase(),
+    idleTimeoutHours:  typeof h  === 'number' && h  > 0 ? h  : DEFAULT_IDLE_TIMEOUT_HOURS,
+    fileReadLimitMb:   typeof mb === 'number' && mb > 0 ? mb : DEFAULT_FILE_READ_LIMIT_MB,
   });
 });
 app.put('/admin/api/settings', requireAdmin, (req, res) => {
   if (req.user.email !== SUPER_ADMIN) return res.status(403).json({ error: 'forbidden' });
-  const { projectsBase, idleTimeoutHours } = req.body;
+  const { projectsBase, idleTimeoutHours, fileReadLimitMb } = req.body;
   const current  = getSettings();
   const updated  = { ...current };
   const response = {};
@@ -766,6 +773,14 @@ app.put('/admin/api/settings', requireAdmin, (req, res) => {
     updated.idleTimeoutHours = h;
     saveSettings(updated);
     response.idleTimeoutHours = h;
+  }
+
+  if (fileReadLimitMb !== undefined) {
+    const mb = Number(fileReadLimitMb);
+    if (!Number.isFinite(mb) || mb <= 0) return res.status(400).json({ error: 'fileReadLimitMb must be a positive number' });
+    updated.fileReadLimitMb = mb;
+    saveSettings(updated);
+    response.fileReadLimitMb = mb;
   }
 
   res.json({ ok: true, ...response });
