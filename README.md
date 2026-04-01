@@ -5,7 +5,7 @@ A self-hosted web terminal for [Claude Code](https://claude.ai/code), accessible
 ## Features
 
 ### Terminal
-A full xterm-based terminal running Claude Code in your browser. Input and output stream over WebSocket in real time. If you close the tab or lose connection, the session stays alive on the server for up to 2 hours and replays the output buffer when you reconnect.
+A full xterm-based terminal running Claude Code in your browser. Input and output stream over WebSocket in real time. If you close the tab or lose connection, the session stays alive on the server and replays the output buffer when you reconnect. The idle timeout is configurable in the admin panel (default 2 hours).
 
 ### Session history
 Click **history** in the header to open the sidebar. Every session you explicitly save (or that gets saved automatically when you switch away) appears here with a title, timestamp, and a snippet of the conversation. You can:
@@ -29,6 +29,7 @@ Accessible at `/admin` by admin users. Lets you:
 - **Manage the whitelist** — add or remove users who can log in
 - **Manage admins** — promote users to admin or demote them (super admin only)
 - **Shared projects** — create shared project directories that multiple users can access; click a project's name or path to edit it inline
+- **Settings** (super admin only) — configure the user projects directory and idle session timeout
 
 ## Architecture
 
@@ -44,7 +45,7 @@ Browser
 
 **Auth** — Passport.js with Google OAuth 2.0. The user's email is checked against `whitelist.json` on login. WebSocket upgrades manually re-run the session parser since Passport doesn't cover the upgrade path.
 
-**PTY sessions** — one `node-pty` process per user, stored in a `Map` keyed by email. Each entry holds the process, a 200 KB output ring buffer (replayed to reconnecting clients), a set of active WebSocket clients (multiple tabs share one PTY), and an idle kill timer (2 hr).
+**PTY sessions** — one `node-pty` process per user, stored in a `Map` keyed by email. Each entry holds the process, a 200 KB output ring buffer (replayed to reconnecting clients), a set of active WebSocket clients (multiple tabs share one PTY), and an idle kill timer (configurable, default 2 hr).
 
 **Persistence** — two files per user under `users/<email>/`: `sessions.json` (up to 100 past sessions with title, snippet, timestamp, and working directory) and `active.json` (current session ID and working directory, used to resume after a server restart).
 
