@@ -219,7 +219,6 @@
     <span class="brand">Claude</span>
     <div id="status" class="disconnected">● disconnected</div>
     <span id="session-badge">resumed</span>
-    <button class="btn accent" id="compact-btn">/compact</button>
     <button class="btn accent" id="refresh-btn">refresh memory</button>
     <div id="user-info">
       <img id="user-avatar" alt="">
@@ -575,13 +574,6 @@
   });
 
   // ── Header buttons ─────────────────────────────────────────────────────────
-  document.getElementById('compact-btn').addEventListener('click', () => {
-    if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'input', data: '/compact\r' }));
-      term.focus();
-    }
-  });
-
   const refreshBtn = document.getElementById('refresh-btn');
   function setRefreshState(loading) {
     refreshBtn.disabled = loading;

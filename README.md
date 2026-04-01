@@ -22,9 +22,7 @@ Each session runs Claude Code inside a dedicated project directory under `~/Docu
 - Leave blank to start an unnamed session
 
 ### Memory management
-Two buttons in the header help manage Claude's context window:
-- **/compact** — sends Claude Code's `/compact` command, which summarises the conversation into a memory file and clears the context, keeping Claude fast on long sessions
-- **refresh memory** — compacts the conversation, saves the session to history, then starts a completely fresh context window in a new session
+The **refresh memory** button in the header compacts the conversation, saves the session to history, then starts a fresh context window in a new session. To compact without switching sessions, type `/compact` directly in the terminal.
 
 ### Admin panel
 Accessible at `/admin` by admin users. Lets you:
