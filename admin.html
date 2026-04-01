@@ -240,6 +240,18 @@
             </div>
           </div>
         </div>
+        <div class="row" style="margin-top:6px">
+          <div class="row-main">
+            <div class="row-label" style="color:#555;margin-bottom:6px">Idle session timeout</div>
+            <div style="display:flex;align-items:center;gap:6px">
+              <div id="settings-idle-timeout" title="Click to edit" style="cursor:text"></div>
+              <span style="font:10px/1 monospace;color:#333">hours</span>
+            </div>
+            <div style="font:10px/1.6 monospace;color:#2e2e2e;margin-top:5px">
+              Sessions with no connected clients are killed after this many hours. Takes effect on the next disconnect.
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -586,6 +598,8 @@
     const data = await api('GET', '/admin/api/settings');
     const el   = document.getElementById('settings-projects-base');
     el.textContent = data.projectsBase;
+    const elIdle = document.getElementById('settings-idle-timeout');
+    elIdle.textContent = data.idleTimeoutHours;
 
     el.addEventListener('click', () => {
       if (el.querySelector('input')) return;
@@ -620,6 +634,40 @@
       input.addEventListener('keydown', e => {
         if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
         if (e.key === 'Escape') { input.removeEventListener('blur', save); el.textContent = currentVal; }
+      });
+    });
+
+    elIdle.addEventListener('click', () => {
+      if (elIdle.querySelector('input')) return;
+      const currentVal = elIdle.textContent;
+      const input = document.createElement('input');
+      input.className = 'sp-inline-input';
+      input.type = 'number'; input.min = '0.1'; input.step = '0.5';
+      input.value = currentVal;
+      input.style.width = '60px';
+      elIdle.textContent = '';
+      elIdle.appendChild(input);
+      input.focus();
+      input.select();
+      async function save() {
+        const newVal = parseFloat(input.value);
+        if (newVal > 0 && newVal !== parseFloat(currentVal)) {
+          try {
+            const result = await api('PUT', '/admin/api/settings', { idleTimeoutHours: newVal });
+            elIdle.textContent = result.idleTimeoutHours;
+            toast('Idle timeout updated');
+          } catch(e) {
+            elIdle.textContent = currentVal;
+            toast(e.message, 'err');
+          }
+        } else {
+          elIdle.textContent = currentVal;
+        }
+      }
+      input.addEventListener('blur', save);
+      input.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+        if (e.key === 'Escape') { input.removeEventListener('blur', save); elIdle.textContent = currentVal; }
       });
     });
   }

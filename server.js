@@ -13,7 +13,11 @@ const os = require('os');
 
 const PORT = process.env.PORT || 3000;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
-const IDLE_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+const DEFAULT_IDLE_TIMEOUT_HOURS = 2;
+function getIdleTimeoutMs() {
+  const h = getSettings().idleTimeoutHours;
+  return (typeof h === 'number' && h > 0 ? h : DEFAULT_IDLE_TIMEOUT_HOURS) * 60 * 60 * 1000;
+}
 const OUTPUT_BUFFER_SIZE = 200_000;
 const MAX_SESSIONS = 100;
 
@@ -681,22 +685,42 @@ function migrateProjectsBase(oldBase, newBase) {
 }
 
 app.get('/admin/api/settings', requireAdmin, (req, res) => {
-  res.json({ projectsBase: getProjectsBase() });
+  const h = getSettings().idleTimeoutHours;
+  res.json({
+    projectsBase:     getProjectsBase(),
+    idleTimeoutHours: typeof h === 'number' && h > 0 ? h : DEFAULT_IDLE_TIMEOUT_HOURS,
+  });
 });
 app.put('/admin/api/settings', requireAdmin, (req, res) => {
   if (req.user.email !== SUPER_ADMIN) return res.status(403).json({ error: 'forbidden' });
-  const { projectsBase } = req.body;
-  if (!projectsBase || typeof projectsBase !== 'string') return res.status(400).json({ error: 'projectsBase required' });
-  const trimmed  = projectsBase.trim();
-  const resolved = trimmed.startsWith('~') ? path.join(os.homedir(), trimmed.slice(1)) : trimmed;
-  if (!path.isAbsolute(resolved)) return res.status(400).json({ error: 'must be an absolute path (or start with ~)' });
+  const { projectsBase, idleTimeoutHours } = req.body;
+  const current  = getSettings();
+  const updated  = { ...current };
+  const response = {};
 
-  const oldBase = getProjectsBase();
-  saveSettings({ ...getSettings(), projectsBase: trimmed });
-  const newBase = getProjectsBase();
+  if (projectsBase !== undefined) {
+    if (typeof projectsBase !== 'string') return res.status(400).json({ error: 'projectsBase must be a string' });
+    const trimmed  = projectsBase.trim();
+    const resolved = trimmed.startsWith('~') ? path.join(os.homedir(), trimmed.slice(1)) : trimmed;
+    if (!path.isAbsolute(resolved)) return res.status(400).json({ error: 'projectsBase must be an absolute path (or start with ~)' });
+    const oldBase = getProjectsBase();
+    updated.projectsBase = trimmed;
+    saveSettings(updated);
+    const newBase = getProjectsBase();
+    const warnings = migrateProjectsBase(oldBase, newBase);
+    response.projectsBase = newBase;
+    if (warnings.length) response.warnings = warnings;
+  }
 
-  const warnings = migrateProjectsBase(oldBase, newBase);
-  res.json({ ok: true, projectsBase: newBase, warnings: warnings.length ? warnings : undefined });
+  if (idleTimeoutHours !== undefined) {
+    const h = Number(idleTimeoutHours);
+    if (!Number.isFinite(h) || h <= 0) return res.status(400).json({ error: 'idleTimeoutHours must be a positive number' });
+    updated.idleTimeoutHours = h;
+    saveSettings(updated);
+    response.idleTimeoutHours = h;
+  }
+
+  res.json({ ok: true, ...response });
 });
 
 // Active sessions (view + kill)
@@ -784,8 +808,8 @@ wss.on('connection', (ws, request) => {
       current.killTimer = setTimeout(() => {
         console.log(`[${email}] idle timeout`);
         killSession(email);
-      }, IDLE_TIMEOUT_MS);
-      console.log(`[${email}] disconnected (session kept ${IDLE_TIMEOUT_MS / 60000}min)`);
+      }, getIdleTimeoutMs());
+      console.log(`[${email}] disconnected (session kept ${getIdleTimeoutMs() / 60000}min)`);
     }
   });
 });
