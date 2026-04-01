@@ -18,7 +18,11 @@ function getIdleTimeoutMs() {
   const h = getSettings().idleTimeoutHours;
   return (typeof h === 'number' && h > 0 ? h : DEFAULT_IDLE_TIMEOUT_HOURS) * 60 * 60 * 1000;
 }
-const OUTPUT_BUFFER_SIZE = 200_000;
+const DEFAULT_OUTPUT_BUFFER_KB = 200;
+function getOutputBufferSize() {
+  const kb = getSettings().outputBufferKb;
+  return (typeof kb === 'number' && kb > 0 ? kb : DEFAULT_OUTPUT_BUFFER_KB) * 1024;
+}
 const MAX_SESSIONS = 100;
 
 function newId() { return crypto.randomBytes(6).toString('hex'); }
@@ -271,7 +275,8 @@ function startSession(user, sessionId, opts = {}) {
 
   ptyProcess.onData((data) => {
     sess.buffer += data;
-    if (sess.buffer.length > OUTPUT_BUFFER_SIZE) sess.buffer = sess.buffer.slice(-OUTPUT_BUFFER_SIZE);
+    const bufLimit = getOutputBufferSize();
+    if (sess.buffer.length > bufLimit) sess.buffer = sess.buffer.slice(-bufLimit);
     const msg = JSON.stringify({ type: 'output', data });
     sess.clients.forEach(c => { if (c.readyState === c.OPEN) c.send(msg); });
   });
@@ -306,8 +311,16 @@ function broadcast(email, msg) {
 app.get('/auth/google', passport.authenticate('google', { scope: ['email', 'profile'] }));
 
 app.get('/auth/google/callback',
-  passport.authenticate('google', { failureRedirect: '/login?error=not_whitelisted' }),
-  (req, res) => res.redirect('/')
+  (req, res, next) => {
+    passport.authenticate('google', (err, user) => {
+      if (err) return res.redirect('/login?error=auth_failed');
+      if (!user) return res.redirect('/login?error=not_whitelisted');
+      req.logIn(user, loginErr => {
+        if (loginErr) return next(loginErr);
+        res.redirect('/');
+      });
+    })(req, res, next);
+  }
 );
 
 app.get('/logout', (req, res) => req.logout(() => res.redirect('/login')));
@@ -326,7 +339,7 @@ function requireAuth(req, res, next) {
 
 app.get('/me', requireAuth, (req, res) => {
   const sess = live.get(req.user.email);
-  res.json({ email: req.user.email, name: req.user.name, avatar: req.user.avatar, hasSession: !!sess, isAdmin: getAdmins().includes(req.user.email) });
+  res.json({ email: req.user.email, name: req.user.name, avatar: req.user.avatar, hasSession: !!sess, isAdmin: getAdmins().includes(req.user.email), isSuperAdmin: req.user.email === SUPER_ADMIN });
 });
 
 // List project directories for the current user (personal + shared)
@@ -738,17 +751,20 @@ function migrateProjectsBase(oldBase, newBase) {
 }
 
 app.get('/admin/api/settings', requireAdmin, (req, res) => {
-  const h  = getSettings().idleTimeoutHours;
-  const mb = getSettings().fileReadLimitMb;
+  const s = getSettings();
+  const h  = s.idleTimeoutHours;
+  const mb = s.fileReadLimitMb;
+  const kb = s.outputBufferKb;
   res.json({
-    projectsBase:      getProjectsBase(),
-    idleTimeoutHours:  typeof h  === 'number' && h  > 0 ? h  : DEFAULT_IDLE_TIMEOUT_HOURS,
-    fileReadLimitMb:   typeof mb === 'number' && mb > 0 ? mb : DEFAULT_FILE_READ_LIMIT_MB,
+    projectsBase:     getProjectsBase(),
+    idleTimeoutHours: typeof h  === 'number' && h  > 0 ? h  : DEFAULT_IDLE_TIMEOUT_HOURS,
+    fileReadLimitMb:  typeof mb === 'number' && mb > 0 ? mb : DEFAULT_FILE_READ_LIMIT_MB,
+    outputBufferKb:   typeof kb === 'number' && kb > 0 ? kb : DEFAULT_OUTPUT_BUFFER_KB,
   });
 });
 app.put('/admin/api/settings', requireAdmin, (req, res) => {
   if (req.user.email !== SUPER_ADMIN) return res.status(403).json({ error: 'forbidden' });
-  const { projectsBase, idleTimeoutHours, fileReadLimitMb } = req.body;
+  const { projectsBase, idleTimeoutHours, fileReadLimitMb, outputBufferKb } = req.body;
   const current  = getSettings();
   const updated  = { ...current };
   const response = {};
@@ -781,6 +797,14 @@ app.put('/admin/api/settings', requireAdmin, (req, res) => {
     updated.fileReadLimitMb = mb;
     saveSettings(updated);
     response.fileReadLimitMb = mb;
+  }
+
+  if (outputBufferKb !== undefined) {
+    const kb = Number(outputBufferKb);
+    if (!Number.isFinite(kb) || kb <= 0) return res.status(400).json({ error: 'outputBufferKb must be a positive number' });
+    updated.outputBufferKb = kb;
+    saveSettings(updated);
+    response.outputBufferKb = kb;
   }
 
   res.json({ ok: true, ...response });

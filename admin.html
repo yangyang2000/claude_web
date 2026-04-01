@@ -16,11 +16,7 @@
       padding: 10px 20px; background: #0d0d0d; border-bottom: 1px solid #1e1e1e;
       display: flex; align-items: center; gap: 10px; position: sticky; top: 0; z-index: 10;
     }
-    .brand { color: #e06c75; font: bold 13px/1 monospace; }
-    .brand-sep { color: #333; }
-    .brand-sub { color: #61afef; font: 13px/1 monospace; }
     #header-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
-    #user-email { font: 12px/1 monospace; color: #61afef; }
     #user-avatar { width: 22px; height: 22px; border-radius: 50%; display: none; }
 
     .btn {
@@ -150,12 +146,8 @@
 </head>
 <body>
   <div id="header">
-    <span class="brand">Claude</span>
-    <span class="brand-sep">/</span>
-    <span class="brand-sub">Admin</span>
     <div id="header-right">
-      <img id="user-avatar" alt="">
-      <span id="user-email"></span>
+      <img id="user-avatar" alt="" title="">
       <a class="btn muted" href="/">← terminal</a>
       <a class="btn muted" href="/logout">logout</a>
     </div>
@@ -261,6 +253,18 @@
             </div>
             <div style="font:10px/1.6 monospace;color:#2e2e2e;margin-top:5px">
               Maximum file size loaded in the file browser viewer. Larger files are truncated.
+            </div>
+          </div>
+        </div>
+        <div class="row" style="margin-top:6px">
+          <div class="row-main">
+            <div class="row-label" style="color:#555;margin-bottom:6px">Terminal output buffer</div>
+            <div style="display:flex;align-items:center;gap:6px">
+              <div id="settings-output-buffer" title="Click to edit" style="cursor:text"></div>
+              <span style="font:10px/1 monospace;color:#333">KB</span>
+            </div>
+            <div style="font:10px/1.6 monospace;color:#2e2e2e;margin-top:5px">
+              Ring buffer size replayed to reconnecting clients. Increase if output is lost on reconnect.
             </div>
           </div>
         </div>
@@ -553,7 +557,7 @@
     document.getElementById('admins-count').textContent = `${list.length}`;
 
     // Only super admin sees add/remove controls
-    const isSuperAdmin = me?.email === superAdmin;
+    const isSuperAdmin = me?.isSuperAdmin;
     addForm.style.display = isSuperAdmin ? '' : 'none';
 
     ul.innerHTML = '';
@@ -605,7 +609,7 @@
 
   // ── Settings ───────────────────────────────────────────────────────────────
   async function loadSettings() {
-    if (me?.email !== superAdmin) return;
+    if (!me?.isSuperAdmin) return;
     document.getElementById('card-settings').style.display = '';
     const data = await api('GET', '/admin/api/settings');
     const el   = document.getElementById('settings-projects-base');
@@ -614,6 +618,8 @@
     elIdle.textContent = data.idleTimeoutHours;
     const elLimit = document.getElementById('settings-file-limit');
     elLimit.textContent = data.fileReadLimitMb;
+    const elBuf  = document.getElementById('settings-output-buffer');
+    elBuf.textContent = data.outputBufferKb;
 
     el.addEventListener('click', () => {
       if (el.querySelector('input')) return;
@@ -718,16 +724,47 @@
         if (e.key === 'Escape') { input.removeEventListener('blur', save); elLimit.textContent = currentVal; }
       });
     });
+
+    elBuf.addEventListener('click', () => {
+      if (elBuf.querySelector('input')) return;
+      const currentVal = elBuf.textContent;
+      const input = document.createElement('input');
+      input.type = 'number'; input.value = currentVal; input.min = '1'; input.step = '50';
+      input.style.width = '60px';
+      elBuf.textContent = '';
+      elBuf.appendChild(input);
+      input.focus();
+      input.select();
+      async function save() {
+        const newVal = parseFloat(input.value);
+        if (newVal > 0 && newVal !== parseFloat(currentVal)) {
+          try {
+            const result = await api('PUT', '/admin/api/settings', { outputBufferKb: newVal });
+            elBuf.textContent = result.outputBufferKb;
+            toast('Output buffer updated');
+          } catch(e) {
+            elBuf.textContent = currentVal;
+            toast(e.message, 'err');
+          }
+        } else {
+          elBuf.textContent = currentVal;
+        }
+      }
+      input.addEventListener('blur', save);
+      input.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+        if (e.key === 'Escape') { input.removeEventListener('blur', save); elBuf.textContent = currentVal; }
+      });
+    });
   }
 
   // ── Init ───────────────────────────────────────────────────────────────────
   async function init() {
     me = await fetch('/me').then(r => r.json()).catch(() => null);
     if (!me) { location = '/login'; return; }
-    document.getElementById('user-email').textContent = me.email;
     if (me.avatar) {
       const img = document.getElementById('user-avatar');
-      img.src = me.avatar; img.style.display = 'block';
+      img.src = me.avatar; img.title = me.email; img.style.display = 'block';
     }
     await Promise.all([loadWhitelist(), loadSharedProjects(), loadAdmins(), loadActiveSessions()]);
     await loadSettings();

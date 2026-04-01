@@ -1,11 +1,16 @@
 # Claude Web
 
+> **⚠️ Private use only.** This app is designed for a small circle of trusted users — family, close friends, or colleagues you personally know. Every whitelisted user gets full terminal access to your server and can read and write files in your project directories. Do not expose this to the public internet or add anyone you don't fully trust.
+
 A self-hosted web terminal for [Claude Code](https://claude.ai/code), accessible from any browser. Supports multiple users via Google OAuth, persistent sessions, per-user project directories, and an admin panel for managing users and shared projects.
 
 ## Features
 
 ### Terminal
-A full xterm-based terminal running Claude Code in your browser. Input and output stream over WebSocket in real time. If you close the tab or lose connection, the session stays alive on the server and replays the output buffer when you reconnect. The idle timeout is configurable in the admin panel (default 2 hours).
+A full xterm-based terminal running Claude Code in your browser. Input and output stream over WebSocket in real time. If you close the tab or lose connection, the session stays alive on the server and replays the output buffer when you reconnect. The idle timeout and output buffer size are both configurable in the admin panel (defaults: 2 hours, 200 KB).
+
+### Simple / mobile view
+Click **simple** in the header to switch from the xterm terminal to a plain-text view with a bottom input bar. The simple view strips ANSI escape codes and renders output as readable text — much more usable on a phone. Click **terminal** to switch back. Your preference is saved across sessions.
 
 ### Session history
 Click **history** in the header to open the sidebar. Every session you explicitly save (or that gets saved automatically when you switch away) appears here with a title, timestamp, and a snippet of the conversation. You can:
@@ -21,15 +26,21 @@ Each session runs Claude Code inside a dedicated project directory under `~/Docu
 - Type a new name to create a new project directory
 - Leave blank to start an unnamed session
 
+### File browser
+Click **⊞** in the header to open a file browser panel showing the current project directory. Click any file to view its contents — the tree hides and the file fills the panel. Use **⤢** to expand the browser to the full window, and **⤡** to restore the split. The file viewer size limit is configurable in the admin panel (default 5 MB).
+
 ### Memory management
-The **refresh memory** button in the header compacts the conversation, saves the session to history, then starts a fresh context window in a new session. To compact without switching sessions, type `/compact` directly in the terminal.
+The **refresh** button in the header compacts the conversation, saves the session to history, then starts a fresh context window in a new session. To compact without switching sessions, type `/compact` directly in the terminal.
 
 ### Admin panel
 Accessible at `/admin` by admin users. Lets you:
 - **Manage the whitelist** — add or remove users who can log in
 - **Manage admins** — promote users to admin or demote them (super admin only)
 - **Shared projects** — create shared project directories that multiple users can access; click a project's name or path to edit it inline
-- **Settings** (super admin only) — configure the user projects directory and idle session timeout
+- **Active sessions** — see who is connected, their working directory, and kill any session
+- **Settings** (super admin only) — configure the user projects directory, idle session timeout, file viewer size limit, and terminal output buffer size
+
+The super admin is set via `SUPER_ADMIN_EMAIL` in `.env`. This account has exclusive control over admin promotion and server-wide settings, and cannot be removed via the UI.
 
 ## Architecture
 
@@ -45,7 +56,7 @@ Browser
 
 **Auth** — Passport.js with Google OAuth 2.0. The user's email is checked against `whitelist.json` on login. WebSocket upgrades manually re-run the session parser since Passport doesn't cover the upgrade path.
 
-**PTY sessions** — one `node-pty` process per user, stored in a `Map` keyed by email. Each entry holds the process, a 200 KB output ring buffer (replayed to reconnecting clients), a set of active WebSocket clients (multiple tabs share one PTY), and an idle kill timer (configurable, default 2 hr).
+**PTY sessions** — one `node-pty` process per user, stored in a `Map` keyed by email. Each entry holds the process, an output ring buffer replayed to reconnecting clients (configurable, default 200 KB), a set of active WebSocket clients (multiple tabs share one PTY), and an idle kill timer (configurable, default 2 hr).
 
 **Persistence** — two files per user under `users/<email>/`: `sessions.json` (up to 100 past sessions with title, snippet, timestamp, and working directory) and `active.json` (current session ID and working directory, used to resume after a server restart).
 
