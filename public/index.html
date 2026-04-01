@@ -1025,8 +1025,7 @@
         simpleCurrentLine = '';
         i++;
       } else if (ch === '\r') {
-        simpleCurrentLine = '';
-        i++;
+        i++; // ignore bare \r — line-overwrite is a terminal concept, not chat
       } else if (ch < ' ' && ch !== '\t') {
         i++;
       } else {
