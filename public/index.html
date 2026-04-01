@@ -270,16 +270,44 @@
     }
     #main.simple-mode #terminal-container { display: none; }
     #main.simple-mode #simple-view { display: flex; }
-    #simple-output {
-      flex: 1; overflow-y: auto; padding: 10px 12px;
+    #simple-chat {
+      flex: 1; overflow-y: auto;
+      padding: 10px max(12px, calc(50% - 400px));
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    #simple-chat::-webkit-scrollbar { width: 4px; }
+    #simple-chat::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+    .chat-user {
+      align-self: flex-end;
+      background: rgba(97,175,239,.12); border: 1px solid rgba(97,175,239,.25);
+      border-radius: 12px 12px 2px 12px; padding: 7px 12px;
+      font: 13px/1.4 monospace; color: #abb2bf;
+      max-width: 85%; word-break: break-word; white-space: pre-wrap;
+    }
+    .chat-output {
+      align-self: flex-start; width: 100%;
       font: 13px/1.6 "Cascadia Code", "Fira Code", monospace;
       color: #abb2bf; white-space: pre-wrap; word-break: break-word;
     }
-    #simple-output::-webkit-scrollbar { width: 4px; }
-    #simple-output::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+    .chat-thinking {
+      align-self: flex-start; display: flex; gap: 5px; align-items: center;
+      padding: 10px 14px; background: rgba(255,255,255,.04);
+      border-radius: 12px 12px 12px 2px;
+    }
+    .chat-thinking span {
+      width: 7px; height: 7px; border-radius: 50%; background: #555;
+      animation: thinking-bounce 1.2s infinite;
+    }
+    .chat-thinking span:nth-child(2) { animation-delay: .2s; }
+    .chat-thinking span:nth-child(3) { animation-delay: .4s; }
+    @keyframes thinking-bounce {
+      0%, 60%, 100% { opacity: .3; transform: translateY(0); }
+      30%            { opacity: 1;  transform: translateY(-4px); }
+    }
     #simple-input-bar {
       flex-shrink: 0; display: flex; align-items: flex-end; gap: 6px;
-      padding: 8px 10px; border-top: 1px solid #222; background: #111;
+      padding: 8px max(10px, calc(50% - 400px));
+      border-top: 1px solid #222; background: #111;
     }
     #simple-input {
       flex: 1; resize: none; overflow: hidden;
@@ -342,7 +370,7 @@
     <div id="main">
       <div id="terminal-container"></div>
       <div id="simple-view">
-        <div id="simple-output"></div>
+        <div id="simple-chat"></div>
         <div id="simple-input-bar">
           <textarea id="simple-input" rows="1" placeholder="Type a message… (Enter to send, Shift+Enter for newline)"></textarea>
           <button class="btn accent" id="simple-send">Send</button>
@@ -670,8 +698,8 @@
         if (msg.workDir)   { activeWorkDir = msg.workDir; renderProjects(); if (!filePanel.classList.contains('collapsed')) { expandedDirs.clear(); renderTree(); } }
         if (msg.restarted) {
           term.clear(); setRefreshState(false);
-          simpleLines = []; simpleCurrentLine = '';
-          document.getElementById('simple-output').textContent = '';
+          simpleLines = []; simpleCurrentLine = ''; simpleCurrentOutputEl = null; simpleThinkingEl = null;
+          document.getElementById('simple-chat').innerHTML = '';
           loadSessions(); loadProjects();
         }
       } else if (msg.type === 'exit') {
@@ -948,6 +976,8 @@
   let simpleMode = localStorage.getItem('uiMode') === 'simple';
   let simpleLines = [];
   let simpleCurrentLine = '';
+  let simpleCurrentOutputEl = null;
+  let simpleThinkingEl = null;
   const mainEl  = document.getElementById('main');
   const modeTgl = document.getElementById('mode-toggle');
 
@@ -972,13 +1002,21 @@
       .replace(/\x1b./g, '');                       // other 2-char ESC sequences
   }
 
+  function getOrCreateOutputEl() {
+    if (!simpleCurrentOutputEl) {
+      simpleCurrentOutputEl = document.createElement('div');
+      simpleCurrentOutputEl.className = 'chat-output';
+      document.getElementById('simple-chat').appendChild(simpleCurrentOutputEl);
+    }
+    return simpleCurrentOutputEl;
+  }
+
   function appendSimpleOutput(raw) {
     const stripped = stripAnsi(raw);
     let i = 0;
     while (i < stripped.length) {
       const ch = stripped[i];
       if (ch === '\r' && stripped[i + 1] === '\n') {
-        // \r\n (PTY newline) — treat as single newline
         simpleLines.push(simpleCurrentLine);
         simpleCurrentLine = '';
         i += 2;
@@ -987,7 +1025,6 @@
         simpleCurrentLine = '';
         i++;
       } else if (ch === '\r') {
-        // bare \r — cursor-to-line-start (progress/spinner overwrite)
         simpleCurrentLine = '';
         i++;
       } else if (ch < ' ' && ch !== '\t') {
@@ -997,16 +1034,36 @@
         i++;
       }
     }
-    const out = document.getElementById('simple-output');
-    const atBottom = out.scrollHeight - out.scrollTop <= out.clientHeight + 60;
-    out.textContent = [...simpleLines, simpleCurrentLine].join('\n');
-    if (atBottom) out.scrollTop = out.scrollHeight;
+    const content = [...simpleLines, simpleCurrentLine].join('').trim();
+    if (simpleThinkingEl && content.length > 0) {
+      simpleThinkingEl.remove();
+      simpleThinkingEl = null;
+    }
+    const el   = getOrCreateOutputEl();
+    const chat = document.getElementById('simple-chat');
+    const atBottom = chat.scrollHeight - chat.scrollTop <= chat.clientHeight + 60;
+    el.textContent = [...simpleLines, simpleCurrentLine].join('\n');
+    if (atBottom) chat.scrollTop = chat.scrollHeight;
   }
 
   function sendSimpleInput() {
     const inp  = document.getElementById('simple-input');
     const text = inp.value;
     if (!text) return;
+
+    // Seal current output block, add user bubble, show thinking indicator
+    simpleLines = []; simpleCurrentLine = ''; simpleCurrentOutputEl = null;
+    const chat = document.getElementById('simple-chat');
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-user';
+    bubble.textContent = text;
+    chat.appendChild(bubble);
+    simpleThinkingEl = document.createElement('div');
+    simpleThinkingEl.className = 'chat-thinking';
+    simpleThinkingEl.innerHTML = '<span></span><span></span><span></span>';
+    chat.appendChild(simpleThinkingEl);
+    chat.scrollTop = chat.scrollHeight;
+
     if (ws?.readyState === WebSocket.OPEN)
       ws.send(JSON.stringify({ type: 'input', data: text + '\r' }));
     inp.value = '';
