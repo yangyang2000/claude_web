@@ -84,6 +84,12 @@ if [ -z "$SKIP_ENV" ]; then
   echo -e "${BOLD}Port${RESET}"
   PORT=$(ask "Port" "3000")
 
+  echo
+  echo -e "${BOLD}Projects directory${RESET}"
+  echo -e "${DIM}Where user project folders are created. Each user gets a subdirectory inside this.${RESET}"
+  echo
+  PROJECTS_BASE=$(ask "Projects directory" "~/Documents/Claude_Projects")
+
   cat > .env <<EOF
 GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
 GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
@@ -137,6 +143,23 @@ if [ -z "$SKIP_WHITELIST" ]; then
 
   echo "$json" > whitelist.json
   echo -e "${GREEN}✓ whitelist.json created with ${#emails[@]} email(s)${RESET}"
+fi
+
+# ── settings.json ────────────────────────────────────────────────────────────
+
+DEFAULT_PROJECTS_BASE=~/Documents/Claude_Projects
+if [ -n "$PROJECTS_BASE" ] && [ "$PROJECTS_BASE" != "$DEFAULT_PROJECTS_BASE" ] && [ "$PROJECTS_BASE" != "~/Documents/Claude_Projects" ]; then
+  if [ -f settings.json ]; then
+    echo
+    echo -e "${YELLOW}settings.json already exists.${RESET}"
+    if ask_yn "Overwrite it?"; then
+      echo "{ \"projectsBase\": \"${PROJECTS_BASE}\" }" > settings.json
+      echo -e "${GREEN}✓ settings.json created${RESET}"
+    fi
+  else
+    echo "{ \"projectsBase\": \"${PROJECTS_BASE}\" }" > settings.json
+    echo -e "${GREEN}✓ settings.json created${RESET}"
+  fi
 fi
 
 # ── npm install ───────────────────────────────────────────────────────────────

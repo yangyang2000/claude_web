@@ -81,6 +81,13 @@ if (-not $skipEnv) {
     Write-Host ""
     $port = Prompt-Input "Port" "3000"
 
+    Write-Host ""
+    Write-Host "Projects directory" -ForegroundColor White
+    Write-Host "Where user project folders are created. Each user gets a subdirectory inside this." -ForegroundColor DarkGray
+    Write-Host ""
+    $defaultProjectsBase = "$env:USERPROFILE\Documents\Claude_Projects"
+    $projectsBase = Prompt-Input "Projects directory" $defaultProjectsBase
+
     $envContent = @"
 GOOGLE_CLIENT_ID=$clientId
 GOOGLE_CLIENT_SECRET=$clientSecret
@@ -93,6 +100,21 @@ PORT=$port
 
     Set-Content -Path ".env" -Value $envContent -Encoding UTF8
     Write-Host "✓ .env created" -ForegroundColor Green
+}
+
+# ── settings.json ────────────────────────────────────────────────────────────
+
+if ($projectsBase -and $projectsBase -ne $defaultProjectsBase) {
+    $writeSettings = $true
+    if (Test-Path "settings.json") {
+        Write-Host ""
+        Write-Host "settings.json already exists." -ForegroundColor Yellow
+        $writeSettings = Prompt-YN "Overwrite it?"
+    }
+    if ($writeSettings) {
+        Set-Content -Path "settings.json" -Value "{`"projectsBase`": `"$($projectsBase.Replace('\','\\'))`"}" -Encoding UTF8
+        Write-Host "✓ settings.json created" -ForegroundColor Green
+    }
 }
 
 # ── whitelist.json ────────────────────────────────────────────────────────────
