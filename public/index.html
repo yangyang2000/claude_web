@@ -140,7 +140,7 @@
     .session-item:hover .session-actions { opacity: 1; }
     .session-action-btn {
       background: none; border: none; cursor: pointer; padding: 1px 3px;
-      font-size: 12px; color: #333; line-height: 1; transition: color .1s;
+      font-size: 12px; color: #555; line-height: 1; transition: color .1s;
     }
     .session-action-btn:hover.rename { color: #61afef; }
     .session-action-btn:hover.delete { color: #e06c75; }
@@ -405,6 +405,7 @@
       <div id="conversations-section">
         <div class="section-head">
           <span class="section-label">Conversations</span>
+          <button class="btn muted" id="new-in-project-btn" title="Start new session in this project" style="display:none">+ here</button>
           <button class="btn accent" id="save-session-btn" title="Save current conversation to history">save</button>
         </div>
         <div id="search-wrap">
@@ -586,11 +587,12 @@
     if (q) filtered = filtered.filter(s => s.title?.toLowerCase().includes(q) || s.snippet?.toLowerCase().includes(q));
     renderSessions(filtered);
 
-    // Update conversations section label to reflect active filter
+    // Update conversations section label and project button to reflect active filter
     const label = document.querySelector('#conversations-section .section-label');
     label.textContent = filterProjectPath
       ? `Conversations — ${filterProjectPath.split('/').pop()}`
       : 'Conversations';
+    document.getElementById('new-in-project-btn').style.display = filterProjectPath ? '' : 'none';
   }
 
   function renderSessions(sessions) {
@@ -723,6 +725,7 @@
   document.getElementById('save-session-btn').addEventListener('click', saveCurrentSession);
   document.getElementById('clear-all-btn').addEventListener('click', clearAllSessions);
   document.getElementById('new-session-btn').addEventListener('click', openProjectModal);
+  document.getElementById('new-in-project-btn').addEventListener('click', () => { if (filterProjectPath) switchToProject(filterProjectPath); });
 
   // ── WebSocket ──────────────────────────────────────────────────────────────
   const statusEl = document.getElementById('status');
@@ -754,7 +757,8 @@
         if (msg.workDir)   { activeWorkDir = msg.workDir; renderProjects(); if (!filePanel.classList.contains('collapsed')) { expandedDirs.clear(); renderTree(); } }
         if (msg.restarted) {
           term.clear(); setRefreshState(false);
-          simpleLines = []; simpleCurrentLine = ''; simpleCurrentOutputEl = null; simpleThinkingEl = null;
+          simpleAllLines = []; simpleDisplayLines = []; simpleCurrentLine = '';
+          simpleCurrentOutputEl = null; simpleThinkingEl = null; clearTimeout(simpleFlushTimer);
           document.getElementById('simple-chat').innerHTML = '';
           loadSessions(); loadProjects();
         }
@@ -1143,10 +1147,12 @@
 
   // ── Simple / terminal mode toggle ─────────────────────────────────────────
   let simpleMode = localStorage.getItem('uiMode') === 'simple';
-  let simpleLines = [];
+  let simpleAllLines = [];     // raw buffer (all lines)
+  let simpleDisplayLines = []; // filtered lines to show
   let simpleCurrentLine = '';
   let simpleCurrentOutputEl = null;
   let simpleThinkingEl = null;
+  let simpleFlushTimer = null;
   const mainEl  = document.getElementById('main');
   const modeTgl = document.getElementById('mode-toggle');
 
@@ -1180,17 +1186,48 @@
     return simpleCurrentOutputEl;
   }
 
+  // Lines starting with ● (tool calls) or ⎿ (tool results) are Claude Code
+  // progress output — hide them and show only the response text.
+  function isSimpleToolLine(line) {
+    return /^[●⎿]/.test(line.trimStart());
+  }
+  function isPermissionLine(line) {
+    return /\[y[/\\]n\]/i.test(line) || /\(yes\/no\)/i.test(line);
+  }
+
+  function flushSimpleDisplay(includeCurrent) {
+    const lines = (includeCurrent && simpleCurrentLine && !isSimpleToolLine(simpleCurrentLine))
+      ? [...simpleDisplayLines, simpleCurrentLine]
+      : simpleDisplayLines;
+    const content = lines.join('\n').trim();
+    if (!content) return;
+    if (simpleThinkingEl) { simpleThinkingEl.remove(); simpleThinkingEl = null; }
+    const el   = getOrCreateOutputEl();
+    const chat = document.getElementById('simple-chat');
+    const atBottom = chat.scrollHeight - chat.scrollTop <= chat.clientHeight + 60;
+    el.textContent = content;
+    if (atBottom) chat.scrollTop = chat.scrollHeight;
+  }
+
+  function onSimpleLineComplete(line) {
+    simpleAllLines.push(line);
+    if (isSimpleToolLine(line)) return;
+    simpleDisplayLines.push(line);
+    clearTimeout(simpleFlushTimer);
+    simpleFlushTimer = setTimeout(() => flushSimpleDisplay(false), isPermissionLine(line) ? 0 : 50);
+  }
+
   function appendSimpleOutput(raw) {
     const stripped = stripAnsi(raw);
     let i = 0;
     while (i < stripped.length) {
       const ch = stripped[i];
       if (ch === '\r' && stripped[i + 1] === '\n') {
-        simpleLines.push(simpleCurrentLine);
+        onSimpleLineComplete(simpleCurrentLine);
         simpleCurrentLine = '';
         i += 2;
       } else if (ch === '\n') {
-        simpleLines.push(simpleCurrentLine);
+        onSimpleLineComplete(simpleCurrentLine);
         simpleCurrentLine = '';
         i++;
       } else if (ch === '\r') {
@@ -1202,16 +1239,12 @@
         i++;
       }
     }
-    const content = [...simpleLines, simpleCurrentLine].join('').trim();
-    if (simpleThinkingEl && content.length > 0) {
-      simpleThinkingEl.remove();
-      simpleThinkingEl = null;
+    // If there's a partial line and input goes quiet, flush it — catches prompts
+    // like "Enter choice: " that never receive a newline
+    if (simpleCurrentLine && !isSimpleToolLine(simpleCurrentLine)) {
+      clearTimeout(simpleFlushTimer);
+      simpleFlushTimer = setTimeout(() => flushSimpleDisplay(true), 300);
     }
-    const el   = getOrCreateOutputEl();
-    const chat = document.getElementById('simple-chat');
-    const atBottom = chat.scrollHeight - chat.scrollTop <= chat.clientHeight + 60;
-    el.textContent = [...simpleLines, simpleCurrentLine].join('\n');
-    if (atBottom) chat.scrollTop = chat.scrollHeight;
   }
 
   function sendSimpleInput() {
@@ -1220,7 +1253,8 @@
     if (!text) return;
 
     // Seal current output block, add user bubble, show thinking indicator
-    simpleLines = []; simpleCurrentLine = ''; simpleCurrentOutputEl = null;
+    simpleAllLines = []; simpleDisplayLines = []; simpleCurrentLine = '';
+    simpleCurrentOutputEl = null; clearTimeout(simpleFlushTimer);
     const chat = document.getElementById('simple-chat');
     const bubble = document.createElement('div');
     bubble.className = 'chat-user';
