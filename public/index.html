@@ -1186,10 +1186,12 @@
     return simpleCurrentOutputEl;
   }
 
-  // Lines starting with ● (tool calls) or ⎿ (tool results) are Claude Code
-  // progress output — hide them and show only the response text.
+  // Lines starting with Claude Code UI characters are tool/progress output —
+  // hide them and show only the response text.
   function isSimpleToolLine(line) {
-    return /^[●⎿]/.test(line.trimStart());
+    const t = line.trimStart();
+    return /^[●⎿◆▸✓✗·]/.test(t)          // Claude Code tool indicators
+      || /^[\u2800-\u28FF]/.test(t);       // Braille spinner characters
   }
   function isPermissionLine(line) {
     return /\[y[/\\]n\]/i.test(line) || /\(yes\/no\)/i.test(line);
@@ -1231,7 +1233,8 @@
         simpleCurrentLine = '';
         i++;
       } else if (ch === '\r') {
-        i++; // ignore bare \r — line-overwrite is a terminal concept, not chat
+        simpleCurrentLine = ''; // bare \r overwrites the current line (spinner updates etc.)
+        i++;
       } else if (ch < ' ' && ch !== '\t') {
         i++;
       } else {
@@ -1239,9 +1242,9 @@
         i++;
       }
     }
-    // If there's a partial line and input goes quiet, flush it — catches prompts
-    // like "Enter choice: " that never receive a newline
-    if (simpleCurrentLine && !isSimpleToolLine(simpleCurrentLine)) {
+    // Flush partial line only if it looks like an interactive prompt (ends with
+    // ?, :, or >) — avoids dumping mid-stream tool fragments
+    if (simpleCurrentLine && !isSimpleToolLine(simpleCurrentLine) && /[?:>]\s*$/.test(simpleCurrentLine)) {
       clearTimeout(simpleFlushTimer);
       simpleFlushTimer = setTimeout(() => flushSimpleDisplay(true), 300);
     }
