@@ -239,6 +239,34 @@ function stripAnsi(str) {
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
 }
 
+// Tool/progress lines from Claude Code CLI — suppress in simple chat view
+function isToolLine(line) {
+  const t = line.trimStart();
+  return /^[●⎿◆▸✓✗·]/.test(t) || /^[\u2800-\u28FF]/.test(t);
+}
+
+// filterChatText: strip ANSI + tool lines, handle \r correctly
+// state = { pendingCR: bool, currentLine: string }
+function filterChatText(raw, state) {
+  const stripped = stripAnsi(raw);
+  const outLines = [];
+  for (let i = 0; i < stripped.length; i++) {
+    const ch = stripped[i];
+    if (ch === '\n') {
+      if (!isToolLine(state.currentLine)) outLines.push(state.currentLine);
+      state.currentLine = '';
+      state.pendingCR = false;
+    } else if (ch === '\r') {
+      if (state.pendingCR) state.currentLine = '';
+      state.pendingCR = true;
+    } else if (ch >= ' ' || ch === '\t') {
+      if (state.pendingCR) { state.currentLine = ''; state.pendingCR = false; }
+      state.currentLine += ch;
+    }
+  }
+  return outLines.join('\n');
+}
+
 function extractTitleAndSnippet(rawOutput) {
   const lines = stripAnsi(rawOutput)
     .split(/[\r\n]+/)
@@ -269,7 +297,8 @@ function startSession(user, sessionId, opts = {}) {
     name: 'xterm-256color', cols: 220, rows: 50, cwd: workDir, env: ptyEnv,
   });
 
-  const sess = { ptyProcess, buffer: '', clients: new Set(), killTimer: null, sessionId, workDir };
+  const sess = { ptyProcess, buffer: '', clients: new Set(), killTimer: null, sessionId, workDir,
+               chatLog: [], chatAccum: '', chatFilterState: { pendingCR: false, currentLine: '' }, chatSettleTimer: null };
   live.set(email, sess);
   saveActive(email, sessionId, workDir);
 
@@ -279,6 +308,24 @@ function startSession(user, sessionId, opts = {}) {
     if (sess.buffer.length > bufLimit) sess.buffer = sess.buffer.slice(-bufLimit);
     const msg = JSON.stringify({ type: 'output', data });
     sess.clients.forEach(c => { if (c.readyState === c.OPEN) c.send(msg); });
+
+    // Accumulate for chat settle
+    sess.chatAccum += data;
+    clearTimeout(sess.chatSettleTimer);
+    sess.chatSettleTimer = setTimeout(() => {
+      const text = filterChatText(sess.chatAccum, sess.chatFilterState).trim();
+      sess.chatAccum = '';
+      if (!text) return;
+      const append = sess.chatLog.length > 0 && sess.chatLog[sess.chatLog.length - 1].role === 'claude';
+      if (append) {
+        sess.chatLog[sess.chatLog.length - 1].text += '\n' + text;
+      } else {
+        sess.chatLog.push({ role: 'claude', text });
+      }
+      const entry = sess.chatLog[sess.chatLog.length - 1];
+      const chatMsg = JSON.stringify({ type: 'chat_claude', text: entry.text, replace: append });
+      sess.clients.forEach(c => { if (c.readyState === c.OPEN) c.send(chatMsg); });
+    }, 600);
   });
 
   ptyProcess.onExit(({ exitCode }) => {
@@ -295,6 +342,7 @@ function killSession(email) {
   const sess = live.get(email);
   if (!sess) return;
   clearTimeout(sess.killTimer);
+  clearTimeout(sess.chatSettleTimer);
   try { sess.ptyProcess.kill(); } catch (_) {}
   live.delete(email);
 }
@@ -863,6 +911,7 @@ wss.on('connection', (ws, request) => {
     clearTimeout(sess.killTimer);
     sess.killTimer = null;
     if (sess.buffer) ws.send(JSON.stringify({ type: 'output', data: sess.buffer }));
+    if (sess.chatLog.length) ws.send(JSON.stringify({ type: 'chat_log', entries: sess.chatLog }));
     sess.clients.add(ws);
   } else {
     // Check for persisted active session
@@ -883,6 +932,18 @@ wss.on('connection', (ws, request) => {
       const current = live.get(email);
       if (!current) return;
       if (msg.type === 'input')  current.ptyProcess.write(msg.data);
+      if (msg.type === 'input') {
+        const text = msg.data.replace(/\r?\n$/, '').trim();
+        if (text) {
+          current.chatLog.push({ role: 'user', text });
+          // Reset filter state so next claude response starts fresh
+          current.chatFilterState = { pendingCR: false, currentLine: '' };
+          current.chatAccum = '';
+          clearTimeout(current.chatSettleTimer);
+          const chatMsg = JSON.stringify({ type: 'chat_user', text });
+          current.clients.forEach(c => { if (c.readyState === c.OPEN && c !== ws) c.send(chatMsg); });
+        }
+      }
       if (msg.type === 'resize') current.ptyProcess.resize(Math.max(1, msg.cols), Math.max(1, msg.rows));
     } catch (_) {}
   });

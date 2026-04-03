@@ -750,16 +750,31 @@
       const msg = JSON.parse(ev.data);
       if (msg.type === 'output') {
         term.write(msg.data);
-        appendSimpleOutput(msg.data);
+      } else if (msg.type === 'chat_user') {
+        appendChatBubble('user', msg.text);
+      } else if (msg.type === 'chat_claude') {
+        if (simpleThinkingEl) { simpleThinkingEl.remove(); simpleThinkingEl = null; }
+        if (msg.replace) {
+          // Update existing last claude bubble
+          const chat = document.getElementById('simple-chat');
+          const el = chat.querySelector('.chat-output:last-child');
+          if (el && el.dataset.sealed !== '1') { el.textContent = msg.text; }
+          else appendChatBubble('claude', msg.text);
+        } else {
+          appendChatBubble('claude', msg.text);
+        }
+      } else if (msg.type === 'chat_log') {
+        const chat = document.getElementById('simple-chat');
+        chat.innerHTML = '';
+        for (const entry of msg.entries) appendChatBubble(entry.role, entry.text);
       } else if (msg.type === 'meta') {
         badgeEl.className = msg.resumed ? 'resumed' : '';
         if (msg.sessionId) activeSessionId = msg.sessionId;
         if (msg.workDir)   { activeWorkDir = msg.workDir; renderProjects(); if (!filePanel.classList.contains('collapsed')) { expandedDirs.clear(); renderTree(); } }
         if (msg.restarted) {
           term.clear(); setRefreshState(false);
-          simpleAllLines = []; simpleDisplayLines = []; simpleCurrentLine = '';
-          simpleCurrentOutputEl = null; simpleThinkingEl = null; clearTimeout(simpleFlushTimer);
           document.getElementById('simple-chat').innerHTML = '';
+          if (simpleThinkingEl) { simpleThinkingEl.remove(); simpleThinkingEl = null; }
           loadSessions(); loadProjects();
         }
       } else if (msg.type === 'exit') {
@@ -1147,12 +1162,7 @@
 
   // ── Simple / terminal mode toggle ─────────────────────────────────────────
   let simpleMode = localStorage.getItem('uiMode') === 'simple';
-  let simpleAllLines = [];     // raw buffer (all lines)
-  let simpleDisplayLines = []; // filtered lines to show
-  let simpleCurrentLine = '';
-  let simpleCurrentOutputEl = null;
   let simpleThinkingEl = null;
-  let simpleFlushTimer = null;
   const mainEl  = document.getElementById('main');
   const modeTgl = document.getElementById('mode-toggle');
 
@@ -1177,77 +1187,30 @@
       .replace(/\x1b./g, '');                       // other 2-char ESC sequences
   }
 
-  function getOrCreateOutputEl() {
-    if (!simpleCurrentOutputEl) {
-      simpleCurrentOutputEl = document.createElement('div');
-      simpleCurrentOutputEl.className = 'chat-output';
-      document.getElementById('simple-chat').appendChild(simpleCurrentOutputEl);
-    }
-    return simpleCurrentOutputEl;
-  }
-
-  // Lines starting with Claude Code UI characters are tool/progress output —
-  // hide them and show only the response text.
-  function isSimpleToolLine(line) {
-    const t = line.trimStart();
-    return /^[●⎿◆▸✓✗·]/.test(t)          // Claude Code tool indicators
-      || /^[\u2800-\u28FF]/.test(t);       // Braille spinner characters
-  }
-  function isPermissionLine(line) {
-    return /\[y[/\\]n\]/i.test(line) || /\(yes\/no\)/i.test(line);
-  }
-
-  function flushSimpleDisplay(includeCurrent) {
-    const lines = (includeCurrent && simpleCurrentLine && !isSimpleToolLine(simpleCurrentLine))
-      ? [...simpleDisplayLines, simpleCurrentLine]
-      : simpleDisplayLines;
-    const content = lines.join('\n').trim();
-    if (!content) return;
-    if (simpleThinkingEl) { simpleThinkingEl.remove(); simpleThinkingEl = null; }
-    const el   = getOrCreateOutputEl();
+  function appendChatBubble(role, text) {
     const chat = document.getElementById('simple-chat');
     const atBottom = chat.scrollHeight - chat.scrollTop <= chat.clientHeight + 60;
-    el.textContent = content;
+    if (role === 'user') {
+      const el = document.createElement('div');
+      el.className = 'chat-user';
+      el.textContent = text;
+      chat.appendChild(el);
+    } else {
+      // claude — create or update output element
+      let el = chat.querySelector('.chat-output:last-child');
+      if (!el || el.dataset.sealed === '1') {
+        el = document.createElement('div');
+        el.className = 'chat-output';
+        chat.appendChild(el);
+      }
+      el.textContent = text;
+    }
     if (atBottom) chat.scrollTop = chat.scrollHeight;
   }
 
-  function onSimpleLineComplete(line) {
-    simpleAllLines.push(line);
-    if (isSimpleToolLine(line)) return;
-    simpleDisplayLines.push(line);
-    clearTimeout(simpleFlushTimer);
-    simpleFlushTimer = setTimeout(() => flushSimpleDisplay(false), isPermissionLine(line) ? 0 : 50);
-  }
-
-  function appendSimpleOutput(raw) {
-    const stripped = stripAnsi(raw);
-    let i = 0;
-    while (i < stripped.length) {
-      const ch = stripped[i];
-      if (ch === '\r' && stripped[i + 1] === '\n') {
-        onSimpleLineComplete(simpleCurrentLine);
-        simpleCurrentLine = '';
-        i += 2;
-      } else if (ch === '\n') {
-        onSimpleLineComplete(simpleCurrentLine);
-        simpleCurrentLine = '';
-        i++;
-      } else if (ch === '\r') {
-        simpleCurrentLine = ''; // bare \r overwrites the current line (spinner updates etc.)
-        i++;
-      } else if (ch < ' ' && ch !== '\t') {
-        i++;
-      } else {
-        simpleCurrentLine += ch;
-        i++;
-      }
-    }
-    // Flush partial line only if it looks like an interactive prompt (ends with
-    // ?, :, or >) — avoids dumping mid-stream tool fragments
-    if (simpleCurrentLine && !isSimpleToolLine(simpleCurrentLine) && /[?:>]\s*$/.test(simpleCurrentLine)) {
-      clearTimeout(simpleFlushTimer);
-      simpleFlushTimer = setTimeout(() => flushSimpleDisplay(true), 300);
-    }
+  function sealLastChatOutput() {
+    const el = document.getElementById('simple-chat').querySelector('.chat-output:last-child');
+    if (el) el.dataset.sealed = '1';
   }
 
   function sendSimpleInput() {
@@ -1256,8 +1219,7 @@
     if (!text) return;
 
     // Seal current output block, add user bubble, show thinking indicator
-    simpleAllLines = []; simpleDisplayLines = []; simpleCurrentLine = '';
-    simpleCurrentOutputEl = null; clearTimeout(simpleFlushTimer);
+    sealLastChatOutput();
     const chat = document.getElementById('simple-chat');
     const bubble = document.createElement('div');
     bubble.className = 'chat-user';
