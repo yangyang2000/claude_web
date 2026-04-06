@@ -262,18 +262,27 @@ function filterChatText(raw) {
   const stripped = stripAnsi(raw);
   const lines = [];
   let cur = '';
+  let savedLine = '';    // content saved at first \r, used if only \r/\n follow
+  let pendingReset = false;
   for (let i = 0; i < stripped.length; i++) {
     const ch = stripped[i];
-    if (ch === '\n')                          { lines.push(cur); cur = ''; }
-    else if (ch === '\r' && stripped[i+1] !== '\n') { cur = ''; } // bare \r = overwrite
-    else if (ch >= ' ' || ch === '\t')        { cur += ch; }
+    if (ch === '\n') {
+      lines.push(pendingReset ? savedLine : cur);
+      cur = ''; savedLine = ''; pendingReset = false;
+    } else if (ch === '\r') {
+      if (!pendingReset) savedLine = cur; // save on first \r only
+      pendingReset = true;
+    } else if (ch >= ' ' || ch === '\t') {
+      if (pendingReset) { cur = ''; pendingReset = false; } // actual overwrite
+      cur += ch;
+    }
   }
-  if (cur.trim()) lines.push(cur); // partial final line
-  const mapped = lines.map(l => l.trimEnd());
-  const nonEmpty = mapped.filter(l => l.trim());
+  const partial = (pendingReset ? savedLine : cur).trimEnd();
+  if (partial.trim()) lines.push(partial);
+  const nonEmpty = lines.map(l => l.trimEnd()).filter(l => l.trim());
   const kept = nonEmpty.filter(l => !isToolLine(l));
-  console.log(`[filterChatText] ${mapped.length} lines, ${nonEmpty.length} nonEmpty, ${kept.length} kept`);
-  if (nonEmpty.length) console.log(`[filterChatText] first 5 nonEmpty:\n${nonEmpty.slice(0,5).map(l=>'  '+JSON.stringify(l)).join('\n')}`);
+  console.log(`[filterChatText] ${lines.length} lines, ${nonEmpty.length} nonEmpty, ${kept.length} kept`);
+  if (nonEmpty.length) console.log(`[filterChatText] first 5:\n${nonEmpty.slice(0,5).map(l=>'  '+JSON.stringify(l)).join('\n')}`);
   return kept.join('\n');
 }
 
