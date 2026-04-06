@@ -313,8 +313,14 @@ function startSession(user, sessionId, opts = {}) {
     sess.chatAccum += data;
     clearTimeout(sess.chatSettleTimer);
     sess.chatSettleTimer = setTimeout(() => {
-      const text = filterChatText(sess.chatAccum, sess.chatFilterState).trim();
+      let text = filterChatText(sess.chatAccum, sess.chatFilterState).trim();
       sess.chatAccum = '';
+      // Flush any partial line (no trailing \n) — Claude's final line often has none
+      const partial = sess.chatFilterState.currentLine.trim();
+      if (partial && !isToolLine(partial)) {
+        text = text ? text + '\n' + partial : partial;
+        sess.chatFilterState.currentLine = '';
+      }
       if (!text) return;
       const append = sess.chatLog.length > 0 && sess.chatLog[sess.chatLog.length - 1].role === 'claude';
       if (append) {
