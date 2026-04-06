@@ -321,8 +321,13 @@ function startSession(user, sessionId, opts = {}) {
     sess.chatAccum += data;
     clearTimeout(sess.chatSettleTimer);
     sess.chatSettleTimer = setTimeout(() => {
+      const stripped = stripAnsi(sess.chatAccum).replace(/\r(?!\n)/g, '');
+      const allLines = stripped.split('\n').map(l => l.trimEnd());
+      const nonEmpty = allLines.filter(l => l.trim());
+      console.log(`[chat settle] accum=${sess.chatAccum.length}b lines=${allLines.length} nonEmpty=${nonEmpty.length}`);
+      if (nonEmpty.length) console.log(`[chat settle] sample lines:\n${nonEmpty.slice(0,5).map(l=>'  '+JSON.stringify(l)).join('\n')}`);
       const text = filterChatText(sess.chatAccum).trim();
-      console.log(`[chat settle] accum=${sess.chatAccum.length}b filtered="${text.slice(0,120)}"`);
+      console.log(`[chat settle] filtered="${text.slice(0,120)}"`);
       sess.chatAccum = '';
       if (!text) { console.log('[chat settle] empty after filter, skipping'); return; }
       const append = sess.chatLog.length > 0 && sess.chatLog[sess.chatLog.length - 1].role === 'claude';
