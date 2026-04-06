@@ -239,20 +239,39 @@ function stripAnsi(str) {
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
 }
 
-// Tool/progress lines from Claude Code CLI — suppress in simple chat view
+// Tool/progress/UI-chrome lines from Claude Code CLI — suppress in simple chat view
 function isToolLine(line) {
-  const t = line.trimStart();
-  return /^[●⎿◆▸✓✗·]/.test(t) || /^[\u2800-\u28FF]/.test(t);
+  const t = line.trim();
+  if (!t) return true;
+  if (/^[●⎿◆▸✓✗·]/.test(t)) return true;          // tool call indicators
+  if (/^[\u2800-\u28FF]/.test(t)) return true;       // Braille spinners
+  if (/^[─═━┄┅┈┉╌╍\-]{4,}$/.test(t)) return true;  // separator lines (4+ dashes/box chars)
+  if (/[─═━]{4,}/.test(t)) return true;              // lines containing long separators
+  if (/Context\s*\[/.test(t)) return true;            // context window bar
+  if (/^◐/.test(t)) return true;                     // model/effort indicator
+  if (/^❯\s*$/.test(t)) return true;                 // bare prompt cursor
+  if (/[█░▓▒]{2,}/.test(t)) return true;             // progress bars
+  if (/^\*\s+\S.*[….]$/.test(t)) return true;        // "* Canoodling…" thinking status
+  if (/%\s*used/.test(t) || /%\s*r(emaining)?/.test(t)) return true; // context % display
+  return false;
 }
 
-// filterChatText: strip ANSI, remove \r (spinner overwrites), split on \n,
-// keep only non-tool non-empty lines.  Stateless — operates on full buffer.
+// filterChatText: strip ANSI, handle \r as line-overwrite, split on \n,
+// keep only non-tool non-empty lines. Operates on full settled buffer.
 function filterChatText(raw) {
-  return stripAnsi(raw)
-    .replace(/\r/g, '')
-    .split('\n')
+  const stripped = stripAnsi(raw);
+  const lines = [];
+  let cur = '';
+  for (let i = 0; i < stripped.length; i++) {
+    const ch = stripped[i];
+    if (ch === '\n')      { lines.push(cur); cur = ''; }
+    else if (ch === '\r') { cur = ''; }               // overwrite — take last content before \n
+    else if (ch >= ' ' || ch === '\t') { cur += ch; }
+  }
+  if (cur.trim()) lines.push(cur); // partial final line
+  return lines
     .map(l => l.trimEnd())
-    .filter(l => l.trim() && !isToolLine(l))
+    .filter(l => !isToolLine(l))
     .join('\n');
 }
 
