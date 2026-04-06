@@ -269,10 +269,12 @@ function filterChatText(raw) {
     else if (ch >= ' ' || ch === '\t')        { cur += ch; }
   }
   if (cur.trim()) lines.push(cur); // partial final line
-  return lines
-    .map(l => l.trimEnd())
-    .filter(l => !isToolLine(l))
-    .join('\n');
+  const mapped = lines.map(l => l.trimEnd());
+  const nonEmpty = mapped.filter(l => l.trim());
+  const kept = nonEmpty.filter(l => !isToolLine(l));
+  console.log(`[filterChatText] ${mapped.length} lines, ${nonEmpty.length} nonEmpty, ${kept.length} kept`);
+  if (nonEmpty.length) console.log(`[filterChatText] first 5 nonEmpty:\n${nonEmpty.slice(0,5).map(l=>'  '+JSON.stringify(l)).join('\n')}`);
+  return kept.join('\n');
 }
 
 function extractTitleAndSnippet(rawOutput) {
