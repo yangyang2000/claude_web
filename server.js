@@ -314,14 +314,15 @@ function startSession(user, sessionId, opts = {}) {
     clearTimeout(sess.chatSettleTimer);
     sess.chatSettleTimer = setTimeout(() => {
       let text = filterChatText(sess.chatAccum, sess.chatFilterState).trim();
+      const partial = sess.chatFilterState.currentLine.trim();
+      console.log(`[chat settle] accum=${sess.chatAccum.length}b filtered="${text.slice(0,80)}" partial="${partial.slice(0,80)}"`);
       sess.chatAccum = '';
       // Flush any partial line (no trailing \n) — Claude's final line often has none
-      const partial = sess.chatFilterState.currentLine.trim();
       if (partial && !isToolLine(partial)) {
         text = text ? text + '\n' + partial : partial;
         sess.chatFilterState.currentLine = '';
       }
-      if (!text) return;
+      if (!text) { console.log('[chat settle] empty after filter, skipping'); return; }
       const append = sess.chatLog.length > 0 && sess.chatLog[sess.chatLog.length - 1].role === 'claude';
       if (append) {
         sess.chatLog[sess.chatLog.length - 1].text += '\n' + text;
