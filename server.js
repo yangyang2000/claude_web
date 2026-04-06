@@ -30,7 +30,7 @@ function newId() { return crypto.randomBytes(6).toString('hex'); }
 
 // ── Whitelist ─────────────────────────────────────────────────────────────────
 
-const whitelistPath = path.join(__dirname, 'whitelist.json');
+const whitelistPath = path.join(__dirname, 'data', 'whitelist.json');
 if (!fs.existsSync(whitelistPath)) fs.writeFileSync(whitelistPath, '[]');
 
 let _whitelist = null;
@@ -50,7 +50,7 @@ function saveWhitelist(list) {
 // admins.json: array of email strings. SUPER_ADMIN can never be removed via UI.
 
 const SUPER_ADMIN = process.env.SUPER_ADMIN_EMAIL;
-const adminsPath  = path.join(__dirname, 'admins.json');
+const adminsPath  = path.join(__dirname, 'data', 'admins.json');
 if (!fs.existsSync(adminsPath)) fs.writeFileSync(adminsPath, JSON.stringify([SUPER_ADMIN], null, 2));
 
 let _admins = null;
@@ -70,7 +70,7 @@ function saveAdmins(list) {
 // settings.json: { "projectsBase": "/absolute/path" }
 // Supports leading ~ which is expanded to homedir at runtime.
 
-const settingsPath = path.join(__dirname, 'settings.json');
+const settingsPath = path.join(__dirname, 'data', 'settings.json');
 let _settings = null;
 function getSettings() {
   if (!_settings) {
@@ -92,7 +92,7 @@ function getProjectsBase() {
 // ── Shared projects ───────────────────────────────────────────────────────────
 // shared_projects.json: [{ "id": "hex", "path": "/abs/path", "name": "Label", "users": ["email@..."] }]
 
-const sharedProjectsPath = path.join(__dirname, 'shared_projects.json');
+const sharedProjectsPath = path.join(__dirname, 'data', 'shared_projects.json');
 
 let _sharedProjects = null;
 function getSharedProjects() {
@@ -657,7 +657,7 @@ function requireAdmin(req, res, next) {
 
 // Serve admin page (outside public/ so it's never served statically)
 app.get('/admin', requireAdmin, (req, res) => {
-  res.sendFile(path.join(__dirname, 'admin.html'));
+  res.sendFile(path.join(__dirname, 'views', 'admin.html'));
 });
 
 // Whitelist management

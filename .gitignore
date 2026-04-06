@@ -1,11 +1,7 @@
 .env
 node_modules/
 users/
-whitelist.json
-admins.json
-shared_projects.json
-settings.json
-learnings.md
-todo.md
+data/
+docs/
 .claude/
 CLAUDE.md
