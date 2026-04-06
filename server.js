@@ -245,26 +245,15 @@ function isToolLine(line) {
   return /^[●⎿◆▸✓✗·]/.test(t) || /^[\u2800-\u28FF]/.test(t);
 }
 
-// filterChatText: strip ANSI + tool lines, handle \r correctly
-// state = { pendingCR: bool, currentLine: string }
-function filterChatText(raw, state) {
-  const stripped = stripAnsi(raw);
-  const outLines = [];
-  for (let i = 0; i < stripped.length; i++) {
-    const ch = stripped[i];
-    if (ch === '\n') {
-      if (!isToolLine(state.currentLine)) outLines.push(state.currentLine);
-      state.currentLine = '';
-      state.pendingCR = false;
-    } else if (ch === '\r') {
-      if (state.pendingCR) state.currentLine = '';
-      state.pendingCR = true;
-    } else if (ch >= ' ' || ch === '\t') {
-      if (state.pendingCR) { state.currentLine = ''; state.pendingCR = false; }
-      state.currentLine += ch;
-    }
-  }
-  return outLines.join('\n');
+// filterChatText: strip ANSI, remove \r (spinner overwrites), split on \n,
+// keep only non-tool non-empty lines.  Stateless — operates on full buffer.
+function filterChatText(raw) {
+  return stripAnsi(raw)
+    .replace(/\r/g, '')
+    .split('\n')
+    .map(l => l.trimEnd())
+    .filter(l => l.trim() && !isToolLine(l))
+    .join('\n');
 }
 
 function extractTitleAndSnippet(rawOutput) {
@@ -298,7 +287,7 @@ function startSession(user, sessionId, opts = {}) {
   });
 
   const sess = { ptyProcess, buffer: '', clients: new Set(), killTimer: null, sessionId, workDir,
-               chatLog: [], chatAccum: '', chatFilterState: { pendingCR: false, currentLine: '' }, chatSettleTimer: null };
+               chatLog: [], chatAccum: '', chatSettleTimer: null };
   live.set(email, sess);
   saveActive(email, sessionId, workDir);
 
@@ -313,15 +302,9 @@ function startSession(user, sessionId, opts = {}) {
     sess.chatAccum += data;
     clearTimeout(sess.chatSettleTimer);
     sess.chatSettleTimer = setTimeout(() => {
-      let text = filterChatText(sess.chatAccum, sess.chatFilterState).trim();
-      const partial = sess.chatFilterState.currentLine.trim();
-      console.log(`[chat settle] accum=${sess.chatAccum.length}b filtered="${text.slice(0,80)}" partial="${partial.slice(0,80)}"`);
+      const text = filterChatText(sess.chatAccum).trim();
+      console.log(`[chat settle] accum=${sess.chatAccum.length}b filtered="${text.slice(0,120)}"`);
       sess.chatAccum = '';
-      // Flush any partial line (no trailing \n) — Claude's final line often has none
-      if (partial && !isToolLine(partial)) {
-        text = text ? text + '\n' + partial : partial;
-        sess.chatFilterState.currentLine = '';
-      }
       if (!text) { console.log('[chat settle] empty after filter, skipping'); return; }
       const append = sess.chatLog.length > 0 && sess.chatLog[sess.chatLog.length - 1].role === 'claude';
       if (append) {
@@ -943,8 +926,6 @@ wss.on('connection', (ws, request) => {
         const text = msg.data.replace(/\r?\n$/, '').trim();
         if (text) {
           current.chatLog.push({ role: 'user', text });
-          // Reset filter state so next claude response starts fresh
-          current.chatFilterState = { pendingCR: false, currentLine: '' };
           current.chatAccum = '';
           clearTimeout(current.chatSettleTimer);
           const chatMsg = JSON.stringify({ type: 'chat_user', text });
