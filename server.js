@@ -243,16 +243,28 @@ function stripAnsi(str) {
 function isToolLine(line) {
   const t = line.trim();
   if (!t) return true;
-  if (/^[●⎿◆▸✓✗·]/.test(t)) return true;          // tool call indicators
+  if (/^[●⎿◆▸✓✗·✢✶✻✽⚙]/.test(t)) return true;     // tool call / spinner indicators
   if (/^[\u2800-\u28FF]/.test(t)) return true;       // Braille spinners
-  if (/^[─═━┄┅┈┉╌╍\-]{4,}$/.test(t)) return true;  // separator lines (4+ dashes/box chars)
-  if (/[─═━]{4,}/.test(t)) return true;              // lines containing long separators
-  if (/Context\s*\[/.test(t)) return true;            // context window bar
+  if (/^[\u2580-\u259F]/.test(t)) return true;       // block element chars (▐▛▜▝▘ etc.)
+  if (/[\u2580-\u259F]{2,}/.test(t)) return true;    // 2+ block element chars anywhere
+  if (/^[─═━┄┅┈┉╌╍\-]{4,}$/.test(t)) return true;  // separator lines
+  if (/[─═━]{4,}/.test(t)) return true;              // long separators anywhere
+  if (/^Context[\[:\s]/.test(t)) return true;        // context window bar (Context[ or Context: or Context n…)
   if (/^◐/.test(t)) return true;                     // model/effort indicator
-  if (/^❯\s*$/.test(t)) return true;                 // bare prompt cursor
+  if (/^❯/.test(t)) return true;                     // input echo (bare or with content)
   if (/[█░▓▒]{2,}/.test(t)) return true;             // progress bars
   if (/^\*\s+\S.*[….]$/.test(t)) return true;        // "* Canoodling…" thinking status
   if (/%\s*used/.test(t) || /%\s*r(emaining)?/.test(t)) return true; // context % display
+  if (/^v\d+\.\d+/.test(t)) return true;             // version strings (v2.1.92)
+  if (/^\d+\.\d+(\.\d+)?$/.test(t)) return true;     // bare version numbers (4.6, 2.1.92)
+  if (/^Claude\s*$/.test(t)) return true;             // bare "Claude" splash line
+  if (/^Claude\s*Code/.test(t)) return true;          // "Claude Code" / "ClaudeCode..." splash
+  if (/^(Sonnet|Haiku|Opus)\s*(\d.*)?$/.test(t)) return true;  // model names alone on a line
+  if (/^Read\s*\d+\s*file/i.test(t)) return true;    // "Read 1 file" / "Read1 file" tool lines
+  if (/^\(ctrl\+/.test(t) || /\(ctrl\+o\s*to/.test(t)) return true; // keyboard hints
+  if (/expand\)\s*$/.test(t)) return true;            // "(ctrl+o to expand)"
+  if (/^…[/\\]/.test(t)) return true;                // truncated paths (…/project)
+  if (/^\/\w+\s*$/.test(t)) return true;             // bare slash commands (/buddy)
   return false;
 }
 
