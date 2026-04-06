@@ -264,9 +264,9 @@ function filterChatText(raw) {
   let cur = '';
   for (let i = 0; i < stripped.length; i++) {
     const ch = stripped[i];
-    if (ch === '\n')      { lines.push(cur); cur = ''; }
-    else if (ch === '\r') { cur = ''; }               // overwrite — take last content before \n
-    else if (ch >= ' ' || ch === '\t') { cur += ch; }
+    if (ch === '\n')                          { lines.push(cur); cur = ''; }
+    else if (ch === '\r' && stripped[i+1] !== '\n') { cur = ''; } // bare \r = overwrite
+    else if (ch >= ' ' || ch === '\t')        { cur += ch; }
   }
   if (cur.trim()) lines.push(cur); // partial final line
   return lines
