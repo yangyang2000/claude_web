@@ -10,7 +10,9 @@ A self-hosted web terminal for [Claude Code](https://claude.ai/code), accessible
 A full xterm-based terminal running Claude Code in your browser. Input and output stream over WebSocket in real time. If you close the tab or lose connection, the session stays alive on the server and replays the output buffer when you reconnect. The idle timeout and output buffer size are both configurable in the admin panel (defaults: 2 hours, 200 KB).
 
 ### Simple / mobile view
-Click **simple** in the header to switch from the xterm terminal to a plain-text view with a bottom input bar. The simple view strips ANSI escape codes and renders output as readable text — much more usable on a phone. Click **terminal** to switch back. Your preference is saved across sessions.
+> ⚠️ **Active development — prone to bugs.** The simple view's output filtering is heuristic-based and may show garbled text, miss content, or duplicate lines. Use the terminal view for reliable output.
+
+Click **simple** in the header to switch from the xterm terminal to a plain-text view with a bottom input bar. The simple view strips ANSI escape codes and renders output as readable text. Click **terminal** to switch back. The app always opens in terminal mode; switching to simple is per-session only.
 
 ### Session history
 Click **history** in the header to open the sidebar. Every session you explicitly save (or that gets saved automatically when you switch away) appears here with a title, timestamp, and a snippet of the conversation. You can:

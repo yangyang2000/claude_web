@@ -5,6 +5,7 @@ const passport = require('passport');
 const { Strategy: GoogleStrategy } = require('passport-google-oauth20');
 const { WebSocketServer } = require('ws');
 const pty = require('node-pty');
+const { Terminal: HeadlessTerminal } = require('@xterm/headless');
 const path = require('path');
 const http = require('http');
 const fs = require('fs');
@@ -243,6 +244,9 @@ function stripAnsi(str) {
 function isToolLine(line) {
   const t = line.trim();
   if (!t) return true;
+  if (t.length < 4) return true;                      // animation artifacts (partial frames)
+  if (/\(thinking\)/.test(t)) return true;            // thinking mode marker
+  if (/^\w+…$/.test(t)) return true;                  // bare spinner label "Tempering…"
   if (/^[●⎿◆▸✓✗·✢✶✻✽⚙]/.test(t)) return true;     // tool call / spinner indicators
   if (/^[\u2800-\u28FF]/.test(t)) return true;       // Braille spinners
   if (/^[\u2580-\u259F]/.test(t)) return true;       // block element chars (▐▛▜▝▘ etc.)
@@ -268,34 +272,23 @@ function isToolLine(line) {
   return false;
 }
 
-// filterChatText: strip ANSI, handle \r as line-overwrite, split on \n,
-// keep only non-tool non-empty lines. Operates on full settled buffer.
-function filterChatText(raw) {
-  const stripped = stripAnsi(raw);
-  const lines = [];
-  let cur = '';
-  let savedLine = '';    // content saved at first \r, used if only \r/\n follow
-  let pendingReset = false;
-  for (let i = 0; i < stripped.length; i++) {
-    const ch = stripped[i];
-    if (ch === '\n') {
-      lines.push(pendingReset ? savedLine : cur);
-      cur = ''; savedLine = ''; pendingReset = false;
-    } else if (ch === '\r') {
-      if (!pendingReset) savedLine = cur; // save on first \r only
-      pendingReset = true;
-    } else if (ch >= ' ' || ch === '\t') {
-      if (pendingReset) { cur = ''; pendingReset = false; } // actual overwrite
-      cur += ch;
-    }
-  }
-  const partial = (pendingReset ? savedLine : cur).trimEnd();
-  if (partial.trim()) lines.push(partial);
-  const nonEmpty = lines.map(l => l.trimEnd()).filter(l => l.trim());
-  const kept = nonEmpty.filter(l => !isToolLine(l));
-  console.log(`[filterChatText] ${lines.length} lines, ${nonEmpty.length} nonEmpty, ${kept.length} kept`);
-  if (nonEmpty.length) console.log(`[filterChatText] first 5:\n${nonEmpty.slice(0,5).map(l=>'  '+JSON.stringify(l)).join('\n')}`);
-  return kept.join('\n');
+// filterChatText: read the current screen of a persistent headless terminal
+// (all PTY bytes already written) and return non-chrome rows.  Returns a Promise<string>.
+function filterChatText(term) {
+  return new Promise((resolve) => {
+    // Empty write flushes any queued parser work before we read the buffer.
+    term.write('', () => {
+      const lines = [];
+      for (let row = 0; row < term.rows; row++) {
+        const line = term.buffer.active.getLine(row)?.translateToString(true)?.trimEnd() || '';
+        if (line.trim()) lines.push(line);
+      }
+      const kept = lines.filter(l => !isToolLine(l));
+      console.log(`[filterChatText] ${lines.length} nonEmpty rows, ${kept.length} kept`);
+      if (kept.length) console.log(`[filterChatText] kept first 5:\n${kept.slice(0,5).map(l=>'  '+JSON.stringify(l)).join('\n')}`);
+      resolve(kept.join('\n'));
+    });
+  });
 }
 
 function extractTitleAndSnippet(rawOutput) {
@@ -328,8 +321,12 @@ function startSession(user, sessionId, opts = {}) {
     name: 'xterm-256color', cols: 220, rows: 50, cwd: workDir, env: ptyEnv,
   });
 
+  // Persistent headless terminal — mirrors the PTY screen so cursor-positioning
+  // sequences are applied correctly across the entire session lifetime.
+  const termVt = new HeadlessTerminal({ cols: 220, rows: 50, allowProposedApi: true });
+
   const sess = { ptyProcess, buffer: '', clients: new Set(), killTimer: null, sessionId, workDir,
-               chatLog: [], chatAccum: '', chatSettleTimer: null };
+               chatLog: [], chatSettleTimer: null, termVt };
   live.set(email, sess);
   saveActive(email, sessionId, workDir);
 
@@ -340,18 +337,12 @@ function startSession(user, sessionId, opts = {}) {
     const msg = JSON.stringify({ type: 'output', data });
     sess.clients.forEach(c => { if (c.readyState === c.OPEN) c.send(msg); });
 
-    // Accumulate for chat settle
-    sess.chatAccum += data;
+    // Feed the persistent VT so it tracks full screen state.
+    sess.termVt.write(data);
     clearTimeout(sess.chatSettleTimer);
-    sess.chatSettleTimer = setTimeout(() => {
-      const stripped = stripAnsi(sess.chatAccum).replace(/\r(?!\n)/g, '');
-      const allLines = stripped.split('\n').map(l => l.trimEnd());
-      const nonEmpty = allLines.filter(l => l.trim());
-      console.log(`[chat settle] accum=${sess.chatAccum.length}b lines=${allLines.length} nonEmpty=${nonEmpty.length}`);
-      if (nonEmpty.length) console.log(`[chat settle] sample lines:\n${nonEmpty.slice(0,5).map(l=>'  '+JSON.stringify(l)).join('\n')}`);
-      const text = filterChatText(sess.chatAccum).trim();
+    sess.chatSettleTimer = setTimeout(async () => {
+      const text = (await filterChatText(sess.termVt)).trim();
       console.log(`[chat settle] filtered="${text.slice(0,120)}"`);
-      sess.chatAccum = '';
       if (!text) { console.log('[chat settle] empty after filter, skipping'); return; }
       const append = sess.chatLog.length > 0 && sess.chatLog[sess.chatLog.length - 1].role === 'claude';
       if (append) {
@@ -369,6 +360,11 @@ function startSession(user, sessionId, opts = {}) {
     console.log(`[${email}] exited (${exitCode})`);
     const msg = JSON.stringify({ type: 'exit', code: exitCode });
     sess.clients.forEach(c => { if (c.readyState === c.OPEN) { c.send(msg); c.close(); } });
+    // Clean up timers and headless terminal — don't call killSession since that
+    // would try to kill an already-dead PTY process.
+    clearTimeout(sess.killTimer);
+    clearTimeout(sess.chatSettleTimer);
+    try { sess.termVt.dispose(); } catch (_) {}
     live.delete(email);
   });
 
@@ -381,6 +377,7 @@ function killSession(email) {
   clearTimeout(sess.killTimer);
   clearTimeout(sess.chatSettleTimer);
   try { sess.ptyProcess.kill(); } catch (_) {}
+  try { sess.termVt.dispose(); } catch (_) {}
   live.delete(email);
 }
 
@@ -973,7 +970,6 @@ wss.on('connection', (ws, request) => {
         const text = msg.data.replace(/\r?\n$/, '').trim();
         if (text) {
           current.chatLog.push({ role: 'user', text });
-          current.chatAccum = '';
           clearTimeout(current.chatSettleTimer);
           const chatMsg = JSON.stringify({ type: 'chat_user', text });
           current.clients.forEach(c => { if (c.readyState === c.OPEN && c !== ws) c.send(chatMsg); });

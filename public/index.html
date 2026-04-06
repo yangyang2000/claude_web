@@ -1161,7 +1161,8 @@
   window.addEventListener('resize', () => { if (!simpleMode) { fitAddon.fit(); sendResize(); } });
 
   // ── Simple / terminal mode toggle ─────────────────────────────────────────
-  let simpleMode = localStorage.getItem('uiMode') === 'simple';
+  // Always start in terminal mode — simple UI is experimental.
+  let simpleMode = false;
   let simpleThinkingEl = null;
   const mainEl  = document.getElementById('main');
   const modeTgl = document.getElementById('mode-toggle');
@@ -1175,7 +1176,6 @@
 
   modeTgl.addEventListener('click', () => {
     simpleMode = !simpleMode;
-    localStorage.setItem('uiMode', simpleMode ? 'simple' : 'full');
     applyMode();
   });
 
