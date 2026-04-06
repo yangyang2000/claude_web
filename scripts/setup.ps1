@@ -104,27 +104,28 @@ PORT=$port
 
 # ── settings.json ────────────────────────────────────────────────────────────
 
+New-Item -ItemType Directory -Force -Path "data" | Out-Null
 if ($projectsBase -and $projectsBase -ne $defaultProjectsBase) {
     $writeSettings = $true
-    if (Test-Path "settings.json") {
+    if (Test-Path "data/settings.json") {
         Write-Host ""
-        Write-Host "settings.json already exists." -ForegroundColor Yellow
+        Write-Host "data/settings.json already exists." -ForegroundColor Yellow
         $writeSettings = Prompt-YN "Overwrite it?"
     }
     if ($writeSettings) {
-        Set-Content -Path "settings.json" -Value "{`"projectsBase`": `"$($projectsBase.Replace('\','\\'))`"}" -Encoding UTF8
-        Write-Host "✓ settings.json created" -ForegroundColor Green
+        Set-Content -Path "data/settings.json" -Value "{`"projectsBase`": `"$($projectsBase.Replace('\','\\'))`"}" -Encoding UTF8
+        Write-Host "✓ data/settings.json created" -ForegroundColor Green
     }
 }
 
 # ── whitelist.json ────────────────────────────────────────────────────────────
 
 $skipWhitelist = $false
-if (Test-Path "whitelist.json") {
+if (Test-Path "data/whitelist.json") {
     Write-Host ""
-    Write-Host "whitelist.json already exists." -ForegroundColor Yellow
+    Write-Host "data/whitelist.json already exists." -ForegroundColor Yellow
     if (-not (Prompt-YN "Overwrite it?")) {
-        Write-Host "Keeping existing whitelist.json."
+        Write-Host "Keeping existing data/whitelist.json."
         $skipWhitelist = $true
     }
 }
@@ -149,8 +150,8 @@ if (-not $skipWhitelist) {
     }
 
     $json = "[" + (($emails | ForEach-Object { "`"$_`"" }) -join ", ") + "]"
-    Set-Content -Path "whitelist.json" -Value $json -Encoding UTF8
-    Write-Host "✓ whitelist.json created with $($emails.Count) email(s)" -ForegroundColor Green
+    Set-Content -Path "data/whitelist.json" -Value $json -Encoding UTF8
+    Write-Host "✓ data/whitelist.json created with $($emails.Count) email(s)" -ForegroundColor Green
 }
 
 # ── npm install ───────────────────────────────────────────────────────────────

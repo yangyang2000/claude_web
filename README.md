@@ -56,15 +56,15 @@ Browser
                   └── claude CLI
 ```
 
-**Auth** — Passport.js with Google OAuth 2.0. The user's email is checked against `whitelist.json` on login. WebSocket upgrades manually re-run the session parser since Passport doesn't cover the upgrade path.
+**Auth** — Passport.js with Google OAuth 2.0. The user's email is checked against `data/whitelist.json` on login. WebSocket upgrades manually re-run the session parser since Passport doesn't cover the upgrade path.
 
 **PTY sessions** — one `node-pty` process per user, stored in a `Map` keyed by email. Each entry holds the process, an output ring buffer replayed to reconnecting clients (configurable, default 200 KB), a set of active WebSocket clients (multiple tabs share one PTY), and an idle kill timer (configurable, default 2 hr).
 
 **Persistence** — two files per user under `users/<email>/`: `sessions.json` (up to 100 past sessions with title, snippet, timestamp, and working directory) and `active.json` (current session ID and working directory, used to resume after a server restart).
 
-**Project directories** — each session runs `claude` in a dedicated folder. The root is configurable via `settings.json` (default `~/Documents/Claude_Projects`); each user gets a subfolder by their Google username, and each project gets a subfolder within that.
+**Project directories** — each session runs `claude` in a dedicated folder. The root is configurable via `data/settings.json` (default `~/Documents/Claude_Projects`); each user gets a subfolder by their Google username, and each project gets a subfolder within that.
 
-**Admin API** — routes under `/admin/api/` manage `whitelist.json`, `admins.json`, `shared_projects.json`, and `settings.json`. The super admin (`SUPER_ADMIN_EMAIL`) has exclusive control over admin promotion and server-wide settings.
+**Admin API** — routes under `/admin/api/` manage `data/whitelist.json`, `data/admins.json`, `data/shared_projects.json`, and `data/settings.json`. The super admin (`SUPER_ADMIN_EMAIL`) has exclusive control over admin promotion and server-wide settings.
 
 **Frontend** (`public/index.html`) — a single HTML file using xterm.js for the terminal and plain JS for the WebSocket client and session history sidebar. No framework, no build step.
 
@@ -106,17 +106,17 @@ On each new WebSocket connection the server checks: is there a live PTY for this
 ```bash
 git clone https://github.com/YOUR_USERNAME/claude-web.git
 cd claude-web
-./setup.sh
+./scripts/setup.sh
 ```
 
 **Windows (PowerShell):**
 ```powershell
 git clone https://github.com/YOUR_USERNAME/claude-web.git
 cd claude-web
-powershell -ExecutionPolicy Bypass -File setup.ps1
+powershell -ExecutionPolicy Bypass -File scripts/setup.ps1
 ```
 
-The script walks you through creating `.env`, populating `whitelist.json`, and running `npm install`. You'll still need to create a Google OAuth app first (see step 2 below).
+The script walks you through creating `.env`, populating `data/whitelist.json`, and running `npm install`. You'll still need to create a Google OAuth app first (see step 2 below).
 
 ---
 
@@ -168,10 +168,10 @@ SUPER_ADMIN_EMAIL=you@gmail.com
 ### 4. Add allowed users
 
 ```bash
-cp whitelist.example.json whitelist.json
+cp scripts/whitelist.example.json data/whitelist.json
 ```
 
-Edit `whitelist.json` with the Google email addresses of everyone who should have access:
+Edit `data/whitelist.json` with the Google email addresses of everyone who should have access:
 
 ```json
 ["you@gmail.com", "familymember@gmail.com"]

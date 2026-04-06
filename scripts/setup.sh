@@ -105,10 +105,11 @@ fi
 # ── whitelist.json ────────────────────────────────────────────────────────────
 
 echo
-if [ -f whitelist.json ]; then
-  echo -e "${YELLOW}whitelist.json already exists.${RESET}"
+mkdir -p data
+if [ -f data/whitelist.json ]; then
+  echo -e "${YELLOW}data/whitelist.json already exists.${RESET}"
   if ! ask_yn "Overwrite it?"; then
-    echo "Keeping existing whitelist.json."
+    echo "Keeping existing data/whitelist.json."
     SKIP_WHITELIST=1
   fi
 fi
@@ -141,24 +142,24 @@ if [ -z "$SKIP_WHITELIST" ]; then
   done
   json+="]"
 
-  echo "$json" > whitelist.json
-  echo -e "${GREEN}✓ whitelist.json created with ${#emails[@]} email(s)${RESET}"
+  echo "$json" > data/whitelist.json
+  echo -e "${GREEN}✓ data/whitelist.json created with ${#emails[@]} email(s)${RESET}"
 fi
 
 # ── settings.json ────────────────────────────────────────────────────────────
 
 DEFAULT_PROJECTS_BASE=~/Documents/Claude_Projects
 if [ -n "$PROJECTS_BASE" ] && [ "$PROJECTS_BASE" != "$DEFAULT_PROJECTS_BASE" ] && [ "$PROJECTS_BASE" != "~/Documents/Claude_Projects" ]; then
-  if [ -f settings.json ]; then
+  if [ -f data/settings.json ]; then
     echo
-    echo -e "${YELLOW}settings.json already exists.${RESET}"
+    echo -e "${YELLOW}data/settings.json already exists.${RESET}"
     if ask_yn "Overwrite it?"; then
-      echo "{ \"projectsBase\": \"${PROJECTS_BASE}\" }" > settings.json
-      echo -e "${GREEN}✓ settings.json created${RESET}"
+      echo "{ \"projectsBase\": \"${PROJECTS_BASE}\" }" > data/settings.json
+      echo -e "${GREEN}✓ data/settings.json created${RESET}"
     fi
   else
-    echo "{ \"projectsBase\": \"${PROJECTS_BASE}\" }" > settings.json
-    echo -e "${GREEN}✓ settings.json created${RESET}"
+    echo "{ \"projectsBase\": \"${PROJECTS_BASE}\" }" > data/settings.json
+    echo -e "${GREEN}✓ data/settings.json created${RESET}"
   fi
 fi
 
