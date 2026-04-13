@@ -135,6 +135,22 @@ function isAuthorizedPath(email, absPath) {
   });
 }
 
+// ── Project metadata (per-user display names) ─────────────────────────────────
+// users/<email>/projects_meta.json: { "folderName": { displayName: "..." }, ... }
+
+function projectsMetaPath(email) { return path.join(userDataDir(email), 'projects_meta.json'); }
+
+function loadProjectsMeta(email) {
+  try { return JSON.parse(fs.readFileSync(projectsMetaPath(email), 'utf8')); }
+  catch (_) { return {}; }
+}
+
+function saveProjectsMeta(email, meta) {
+  const dir = userDataDir(email);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(projectsMetaPath(email), JSON.stringify(meta, null, 2));
+}
+
 // ── Express + Auth ────────────────────────────────────────────────────────────
 
 const app = express();
@@ -429,6 +445,7 @@ app.get('/api/projects', requireAuth, (req, res) => {
   const email    = req.user.email;
   const username = email.split('@')[0];
   const base     = path.join(getProjectsBase(), username);
+  const meta     = loadProjectsMeta(email);
 
   let personal = [];
   try {
@@ -436,8 +453,9 @@ app.get('/api/projects', requireAuth, (req, res) => {
       personal = fs.readdirSync(base, { withFileTypes: true })
         .filter(e => e.isDirectory())
         .map(e => {
-          const fullPath = path.join(base, e.name);
-          return { name: e.name, path: fullPath, mtime: fs.statSync(fullPath).mtimeMs, shared: false };
+          const fullPath    = path.join(base, e.name);
+          const displayName = meta[e.name]?.displayName || null;
+          return { name: e.name, displayName, path: fullPath, mtime: fs.statSync(fullPath).mtimeMs, shared: false };
         });
     }
   } catch (_) {}
@@ -446,10 +464,124 @@ app.get('/api/projects', requireAuth, (req, res) => {
     .filter(p => { try { return fs.existsSync(p.path); } catch (_) { return false; } })
     .map(p => {
       const name = p.name || path.basename(p.path);
-      return { name, path: p.path, mtime: fs.statSync(p.path).mtimeMs, shared: true };
+      return { name, displayName: null, path: p.path, mtime: fs.statSync(p.path).mtimeMs, shared: true };
     });
 
   res.json([...personal, ...shared].sort((a, b) => b.mtime - a.mtime));
+});
+
+// Update project metadata (display name and/or folder name)
+app.patch('/api/projects', requireAuth, (req, res) => {
+  const email    = req.user.email;
+  const username = email.split('@')[0];
+  const base     = path.join(getProjectsBase(), username);
+  const { path: projPath, displayName, newFolderName } = req.body || {};
+
+  if (!projPath) return res.status(400).json({ error: 'path required' });
+  const resolved = path.resolve(projPath);
+
+  if (!resolved.startsWith(base + path.sep)) {
+    return res.status(403).json({ error: 'can only edit personal projects' });
+  }
+
+  const folderName = path.basename(resolved);
+  const meta       = loadProjectsMeta(email);
+  let   currentKey = folderName;
+
+  // Handle folder rename first (so meta key update happens together)
+  let newPath = resolved;
+  if (newFolderName !== undefined) {
+    const safeName = sanitizeDir(newFolderName);
+    if (!safeName) return res.status(400).json({ error: 'invalid folder name' });
+    if (safeName !== folderName) {
+      newPath = path.join(base, safeName);
+      if (fs.existsSync(newPath)) return res.status(409).json({ error: 'folder name already exists' });
+
+      fs.renameSync(resolved, newPath);
+
+      // Update sessions.json entries
+      const history = loadSessionHistory(email).map(s =>
+        s.workDir === resolved ? { ...s, workDir: newPath } : s
+      );
+      saveSessionHistory(email, history);
+
+      // Update active.json
+      const active = loadActive(email);
+      if (active?.workDir === resolved) saveActive(email, active.sessionId, newPath);
+
+      // Update live session if running
+      const sess = live.get(email);
+      if (sess?.workDir === resolved) {
+        sess.workDir = newPath;
+        saveActive(email, sess.sessionId, newPath);
+      }
+
+      // Migrate meta key
+      if (meta[folderName]) { meta[safeName] = meta[folderName]; delete meta[folderName]; }
+      currentKey = safeName;
+    }
+  }
+
+  // Update displayName
+  if (displayName !== undefined) {
+    const trimmed = (displayName || '').trim();
+    if (trimmed) {
+      if (!meta[currentKey]) meta[currentKey] = {};
+      meta[currentKey].displayName = trimmed;
+    } else if (meta[currentKey]) {
+      delete meta[currentKey].displayName;
+      if (!Object.keys(meta[currentKey]).length) delete meta[currentKey];
+    }
+  }
+
+  saveProjectsMeta(email, meta);
+  res.json({ ok: true, newPath: newPath !== resolved ? newPath : undefined });
+});
+
+// Delete a personal project
+app.delete('/api/projects', requireAuth, (req, res) => {
+  const email    = req.user.email;
+  const username = email.split('@')[0];
+  const base     = path.join(getProjectsBase(), username);
+  const projPath = req.body?.path;
+
+  if (!projPath) return res.status(400).json({ error: 'path required' });
+  const resolved = path.resolve(projPath);
+
+  // Only allow deleting personal projects (under user's own base dir)
+  if (!resolved.startsWith(base + path.sep)) {
+    return res.status(403).json({ error: 'can only delete personal projects' });
+  }
+  if (isSharedProjectPath(resolved)) {
+    return res.status(403).json({ error: 'cannot delete shared projects' });
+  }
+
+  // If the live session is in this project, kill it
+  const sess = live.get(email);
+  if (sess && path.resolve(sess.workDir) === resolved) {
+    sess.ptyProcess.kill();
+    live.delete(email);
+  }
+
+  // Remove sessions that belong to this project
+  const history = loadSessionHistory(email);
+  saveSessionHistory(email, history.filter(s => path.resolve(s.workDir || '') !== resolved));
+
+  // Clean up active.json if it points here
+  const active = loadActive(email);
+  if (active && path.resolve(active.workDir || '') === resolved) {
+    fs.unlinkSync(path.join(userDataDir(email), 'active.json'));
+  }
+
+  // Remove project metadata
+  const folderName = path.basename(resolved);
+  const meta = loadProjectsMeta(email);
+  if (meta[folderName]) { delete meta[folderName]; saveProjectsMeta(email, meta); }
+
+  // Delete the directory
+  fs.rm(resolved, { recursive: true, force: true }, () => {});
+
+  res.json({ ok: true });
 });
 
 // Session history CRUD

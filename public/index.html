@@ -5,7 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Claude Code</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
   <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
@@ -94,6 +96,26 @@
       padding: 1px 4px; flex-shrink: 0;
     }
     #no-projects { padding: 14px 12px; font: 11px/1.5 monospace; color: #2e2e2e; }
+
+    .project-settings-btn {
+      padding: 2px 5px; font-size: 10px; opacity: 0; transition: opacity .1s; flex-shrink: 0;
+    }
+    .project-item:hover .project-settings-btn,
+    .project-settings-btn.active { opacity: 1; }
+
+    .project-item-settings {
+      padding: 7px 12px 9px; background: #080808;
+      border-bottom: 1px solid #111; display: none;
+    }
+    .project-item-settings.open { display: block; }
+    .project-setting-row { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
+    .project-setting-label { font: 10px/1 monospace; color: #3a3a3a; width: 80px; flex-shrink: 0; }
+    .project-setting-input {
+      flex: 1; background: #141414; border: 1px solid #252525; border-radius: 3px;
+      padding: 3px 6px; font: 11px monospace; color: #abb2bf; outline: none; min-width: 0;
+    }
+    .project-setting-input:focus { border-color: #444; }
+    .project-settings-note { font: 9px/1.4 monospace; color: #333; margin-top: 1px; padding-left: 86px; }
 
     /* ── Conversations ── */
     #conversations-section {
@@ -217,6 +239,14 @@
       display: flex; flex-direction: column; overflow: hidden;
     }
     #file-panel.collapsed { display: none; }
+    #file-panel-resize {
+      width: 5px; flex-shrink: 0; cursor: col-resize;
+      background: transparent; position: relative; z-index: 5;
+    }
+    #file-panel-resize:hover, #file-panel-resize.dragging {
+      background: rgba(97,175,239,.25);
+    }
+    #file-panel-resize.collapsed { display: none; }
     #file-panel-head {
       padding: 10px 10px 7px; display: flex; align-items: center; gap: 6px; flex-shrink: 0;
     }
@@ -319,6 +349,47 @@
       color: #e06c75; white-space: pre-wrap; word-break: break-all;
     }
     .nb-output img { max-width: 100%; border-radius: 3px; }
+
+    /* ── Markdown file preview ── */
+    #file-content-body.markdown {
+      white-space: normal; word-break: normal; padding: 14px 16px;
+      font: 13px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    }
+    #file-content-body.markdown h1,
+    #file-content-body.markdown h2,
+    #file-content-body.markdown h3,
+    #file-content-body.markdown h4 { color: #e5c07b; font-weight: bold; margin: .8em 0 .3em; }
+    #file-content-body.markdown h1 { font-size: 1.5em; border-bottom: 1px solid #2a2e36; padding-bottom: .2em; }
+    #file-content-body.markdown h2 { font-size: 1.3em; }
+    #file-content-body.markdown h3 { font-size: 1.1em; }
+    #file-content-body.markdown p { margin: .4em 0; }
+    #file-content-body.markdown ul,
+    #file-content-body.markdown ol { padding-left: 1.6em; margin: .4em 0; }
+    #file-content-body.markdown li { margin: .2em 0; }
+    #file-content-body.markdown code {
+      font: 11px/1.5 "Cascadia Code","Fira Code",monospace;
+      background: #23272e; border-radius: 3px; padding: 1px 5px; color: #98c379;
+    }
+    #file-content-body.markdown pre {
+      background: #23272e; border-radius: 4px; padding: 10px 12px;
+      overflow-x: auto; margin: .5em 0;
+    }
+    #file-content-body.markdown pre code { background: none; padding: 0; display: block; }
+    #file-content-body.markdown a { color: #61afef; }
+    #file-content-body.markdown strong { color: #e5c07b; }
+    #file-content-body.markdown em { color: #c678dd; }
+    #file-content-body.markdown blockquote {
+      border-left: 3px solid #3e4452; padding-left: 10px; margin: .5em 0; color: #5c6370;
+    }
+    #file-content-body.markdown hr { border: none; border-top: 1px solid #2a2e36; margin: .8em 0; }
+    #file-content-body.markdown table { border-collapse: collapse; margin: .5em 0; width: 100%; }
+    #file-content-body.markdown th,
+    #file-content-body.markdown td {
+      border: 1px solid #2a2e36; padding: 5px 8px; font-size: 12px;
+    }
+    #file-content-body.markdown th { background: #1e1e1e; color: #e5c07b; font-weight: bold; }
+    #file-content-body.markdown img { max-width: 100%; border-radius: 4px; }
+    #file-content-body.markdown .katex-display { margin: .6em 0; overflow-x: auto; }
 
     /* ── Simple view ── */
     #simple-view {
@@ -435,6 +506,9 @@
       </div>
     </div>
 
+    <!-- Resize handle between terminal and file panel -->
+    <div id="file-panel-resize" class="collapsed"></div>
+
     <!-- File tree panel -->
     <div id="file-panel" class="collapsed">
       <div id="file-panel-head">
@@ -520,11 +594,26 @@
   }
 
   // ── State ──────────────────────────────────────────────────────────────────
-  let allSessions     = [];
-  let allProjects     = [];
-  let activeSessionId = null;
-  let activeWorkDir   = null;
-  let filterProjectPath = null;   // when set, conversations list is filtered to this project
+  let allSessions        = [];
+  let allProjects        = [];
+  let activeSessionId    = null;
+  let activeWorkDir      = null;
+  let filterProjectPath  = null;   // when set, conversations list is filtered to this project
+  let expandedProjectPath = null;  // project with settings panel open
+
+  function projectDisplayName(workDir) {
+    if (!workDir) return null;
+    const p = allProjects.find(p => p.path === workDir);
+    return p ? (p.displayName || p.name) : workDir.split('/').pop();
+  }
+
+  async function saveProjectMeta(projPath, body) {
+    const r = await fetch('/api/projects', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: projPath, ...body }),
+    });
+    return r.json();
+  }
 
   // ── Projects panel ─────────────────────────────────────────────────────────
   async function loadProjects() {
@@ -542,19 +631,119 @@
     allProjects.forEach(p => {
       const isActive   = activeWorkDir === p.path;
       const isFiltered = filterProjectPath === p.path && !isActive;
-      const item       = document.createElement('div');
-      item.className   = 'project-item'
+      const isExpanded = expandedProjectPath === p.path;
+      const displayName = p.displayName || p.name;
+
+      const entry = document.createElement('div');
+      entry.className = 'project-entry';
+
+      const item = document.createElement('div');
+      item.className = 'project-item'
         + (isActive   ? ' active-project' : '')
         + (isFiltered ? ' filtered'       : '');
       item.title = p.path;
       item.innerHTML = `
         <div class="project-item-info">
-          <div class="project-item-name">${escHtml(p.name)}</div>
+          <div class="project-item-name">${escHtml(displayName)}</div>
         </div>
         ${p.shared ? '<span class="project-shared-badge">shared</span>' : ''}
+        ${!p.shared ? `<button class="project-settings-btn btn muted${isExpanded ? ' active' : ''}" title="Project settings">⚙</button>` : ''}
         <div class="project-item-age">${relDate(p.mtime)}</div>`;
       item.addEventListener('click', () => onProjectClick(p.path));
-      list.appendChild(item);
+      entry.appendChild(item);
+
+      if (!p.shared) {
+        const settingsEl = document.createElement('div');
+        settingsEl.className = 'project-item-settings' + (isExpanded ? ' open' : '');
+        settingsEl.innerHTML = `
+          <div class="project-setting-row">
+            <span class="project-setting-label">display name</span>
+            <input class="project-setting-input proj-display-input" type="text"
+              value="${escHtml(p.displayName || '')}"
+              placeholder="${escHtml(p.name)}" autocomplete="off">
+          </div>
+          <div class="project-setting-row">
+            <span class="project-setting-label">folder name</span>
+            <input class="project-setting-input proj-folder-input" type="text"
+              value="${escHtml(p.name)}" autocomplete="off">
+          </div>
+          <div class="project-settings-note">folder name renames the directory on disk</div>
+          <div class="project-setting-row" style="margin-top:8px">
+            <button class="btn danger proj-delete-btn" style="font-size:10px">delete project</button>
+          </div>`;
+
+        const displayInput = settingsEl.querySelector('.proj-display-input');
+        const folderInput  = settingsEl.querySelector('.proj-folder-input');
+
+        function saveDisplayName() {
+          const newVal = displayInput.value.trim();
+          const oldVal = p.displayName || '';
+          if (newVal === oldVal) return;
+          p.displayName = newVal || null;
+          saveProjectMeta(p.path, { displayName: newVal });
+          renderProjects();
+          applySearch();
+        }
+        displayInput.addEventListener('blur', saveDisplayName);
+        displayInput.addEventListener('keydown', e => {
+          if (e.key === 'Enter') { e.preventDefault(); displayInput.blur(); }
+          if (e.key === 'Escape') { displayInput.value = p.displayName || ''; displayInput.blur(); }
+        });
+
+        let originalFolderName = p.name;
+        async function saveFolderName() {
+          const newName = folderInput.value.trim();
+          if (!newName || newName === originalFolderName) { folderInput.value = originalFolderName; return; }
+          folderInput.disabled = true;
+          const result = await saveProjectMeta(p.path, { newFolderName: newName });
+          folderInput.disabled = false;
+          if (result.error) { folderInput.value = originalFolderName; return; }
+          if (result.newPath) {
+            const oldPath = p.path;
+            p.name = newName; p.path = result.newPath;
+            originalFolderName = newName;
+            if (activeWorkDir   === oldPath) activeWorkDir   = result.newPath;
+            if (filterProjectPath === oldPath) filterProjectPath = result.newPath;
+            allSessions.forEach(s => { if (s.workDir === oldPath) s.workDir = result.newPath; });
+            expandedProjectPath = result.newPath;
+          }
+          renderProjects();
+          applySearch();
+        }
+        folderInput.addEventListener('blur', saveFolderName);
+        folderInput.addEventListener('keydown', e => {
+          if (e.key === 'Enter') { e.preventDefault(); folderInput.blur(); }
+          if (e.key === 'Escape') { folderInput.value = originalFolderName; folderInput.blur(); }
+        });
+
+        const gearBtn = item.querySelector('.project-settings-btn');
+        gearBtn.addEventListener('click', e => {
+          e.stopPropagation();
+          expandedProjectPath = expandedProjectPath === p.path ? null : p.path;
+          renderProjects();
+        });
+        settingsEl.querySelector('.proj-delete-btn').addEventListener('click', async e => {
+          e.stopPropagation();
+          const displayName = p.displayName || p.name;
+          if (!confirm(`Delete project "${displayName}"?\n\nThis will permanently delete the project folder and all its files.`)) return;
+          const r = await fetch('/api/projects', {
+            method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: p.path }),
+          });
+          if (!r.ok) { const d = await r.json(); alert(d.error || 'Delete failed'); return; }
+          if (activeWorkDir === p.path) activeWorkDir = null;
+          if (filterProjectPath === p.path) filterProjectPath = null;
+          expandedProjectPath = null;
+          allProjects = allProjects.filter(x => x.path !== p.path);
+          allSessions = allSessions.filter(s => s.workDir !== p.path);
+          renderProjects();
+          renderSessions();
+        });
+        settingsEl.addEventListener('click', e => e.stopPropagation());
+        entry.appendChild(settingsEl);
+      }
+
+      list.appendChild(entry);
     });
   }
 
@@ -590,7 +779,7 @@
     // Update conversations section label and project button to reflect active filter
     const label = document.querySelector('#conversations-section .section-label');
     label.textContent = filterProjectPath
-      ? `Conversations — ${filterProjectPath.split('/').pop()}`
+      ? `Conversations — ${projectDisplayName(filterProjectPath)}`
       : 'Conversations';
     document.getElementById('new-in-project-btn').style.display = filterProjectPath ? '' : 'none';
   }
@@ -607,7 +796,7 @@
       const item      = document.createElement('div');
       item.className  = 'session-item' + (isActive ? ' active-session' : '');
       item.dataset.id = s.id;
-      const projectName = s.workDir ? s.workDir.split('/').pop() : null;
+      const projectName = projectDisplayName(s.workDir);
       item.innerHTML = `
         <div class="session-meta">
           <div class="session-title-wrap">
@@ -896,14 +1085,42 @@
   // ── File tree ──────────────────────────────────────────────────────────────
   const filePanel       = document.getElementById('file-panel');
   const filePanelToggle = document.getElementById('file-panel-toggle');
+  const filePanelResize = document.getElementById('file-panel-resize');
   const fileTree        = document.getElementById('file-tree');
   const fileTreeEmpty   = document.getElementById('file-tree-empty');
   let fileTreeRoot      = null;   // current workDir being browsed
   let expandedDirs      = new Set();
   let fileRefreshTimer  = null;
 
+  // ── File panel resize drag ──
+  (function initFilePanelResize() {
+    let dragging = false;
+    filePanelResize.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      dragging = true;
+      filePanelResize.classList.add('dragging');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    });
+    document.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      const newWidth = Math.max(120, window.innerWidth - e.clientX);
+      filePanel.style.width = newWidth + 'px';
+      filePanel.style.minWidth = newWidth + 'px';
+    });
+    document.addEventListener('mouseup', () => {
+      if (!dragging) return;
+      dragging = false;
+      filePanelResize.classList.remove('dragging');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      if (!simpleMode) { fitAddon.fit(); sendResize(); }
+    });
+  })();
+
   filePanelToggle.addEventListener('click', () => {
     const open = filePanel.classList.toggle('collapsed');
+    filePanelResize.classList.toggle('collapsed', filePanel.classList.contains('collapsed'));
     filePanelToggle.classList.toggle('active-btn', !filePanel.classList.contains('collapsed'));
     if (!simpleMode) { fitAddon.fit(); sendResize(); }
     if (!filePanel.classList.contains('collapsed')) {
@@ -1049,7 +1266,7 @@
       const src = document.createElement('div');
       src.className = 'nb-source';
       if (cell.cell_type === 'markdown' && typeof marked !== 'undefined') {
-        src.innerHTML = marked.parse(source);
+        src.innerHTML = renderMarkdownString(source);
       } else {
         src.textContent = source;
       }
@@ -1123,13 +1340,51 @@
     }
   }
 
+  // Parse markdown string with LaTeX math support via KaTeX
+  function renderMarkdownString(text) {
+    const mathBlocks = [];
+    // Block math: $$ ... $$ (possibly multiline)
+    let processed = text.replace(/\$\$([\s\S]*?)\$\$/g, (_, tex) => {
+      const id = `%%MATH_BLOCK_${mathBlocks.length}%%`;
+      mathBlocks.push({ tex: tex.trim(), display: true });
+      return id;
+    });
+    // Inline math: $ ... $ (not preceded/followed by $)
+    processed = processed.replace(/(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)/g, (_, tex) => {
+      const id = `%%MATH_BLOCK_${mathBlocks.length}%%`;
+      mathBlocks.push({ tex: tex.trim(), display: false });
+      return id;
+    });
+
+    let html = typeof marked !== 'undefined' ? marked.parse(processed) : processed;
+
+    // Restore math blocks with KaTeX rendering
+    html = html.replace(/%%MATH_BLOCK_(\d+)%%/g, (_, i) => {
+      const { tex, display } = mathBlocks[i];
+      if (typeof katex !== 'undefined') {
+        try {
+          return katex.renderToString(tex, { displayMode: display, throwOnError: false });
+        } catch (e) { /* fall through */ }
+      }
+      return display ? `<pre>${tex}</pre>` : `<code>${tex}</code>`;
+    });
+
+    return html;
+  }
+
+  function renderMarkdown(text) {
+    const body = document.getElementById('file-content-body');
+    body.classList.add('markdown');
+    body.innerHTML = renderMarkdownString(text);
+  }
+
   async function openFile(filePath) {
     const name = filePath.split('/').pop();
     const body = document.getElementById('file-content-body');
     document.getElementById('file-content-name').textContent = name;
     document.getElementById('file-content-name').title = filePath.replace(/^\/home\/[^/]+/, '~');
     document.getElementById('file-content-warning').textContent = '';
-    body.classList.remove('notebook');
+    body.classList.remove('notebook', 'markdown');
     body.innerHTML = '';
     body.textContent = 'Loading…';
     fileContentPane.classList.add('open');
@@ -1140,6 +1395,8 @@
       if (!r.ok) throw new Error(data.error);
       if (name.endsWith('.ipynb')) {
         renderNotebook(data.content);
+      } else if (/\.md$/i.test(name)) {
+        renderMarkdown(data.content);
       } else {
         body.textContent = data.content;
       }
