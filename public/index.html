@@ -391,6 +391,16 @@
     #file-content-body.markdown img { max-width: 100%; border-radius: 4px; }
     #file-content-body.markdown .katex-display { margin: .6em 0; overflow-x: auto; }
 
+    /* ── File editor ── */
+    #file-editor {
+      display: none; flex: 1; min-height: 0; border: none; resize: none; outline: none;
+      background: #1a1a1a; color: #abb2bf; padding: 10px;
+      font: 11px/1.6 "Cascadia Code", "Fira Code", monospace;
+      white-space: pre; tab-size: 2; overflow: auto;
+    }
+    #file-content-pane.editing #file-content-body { display: none; }
+    #file-content-pane.editing #file-editor { display: block; }
+
     /* ── Simple view ── */
     #simple-view {
       display: none; flex: 1; flex-direction: column; min-height: 0;
@@ -523,9 +533,13 @@
         <div id="file-content-header">
           <span id="file-content-name"></span>
           <span id="file-content-warning"></span>
+          <button class="btn muted" id="file-edit-btn" style="padding:2px 6px;font-size:10px;display:none">edit</button>
+          <button class="btn accent" id="file-save-btn" style="padding:2px 6px;font-size:10px;display:none">save</button>
+          <button class="btn muted" id="file-cancel-btn" style="padding:2px 6px;font-size:10px;display:none">cancel</button>
           <button class="btn muted" id="file-content-close" style="padding:2px 6px;font-size:10px">✕</button>
         </div>
         <div id="file-content-body"></div>
+        <textarea id="file-editor"></textarea>
       </div>
     </div>
   </div>
@@ -1229,8 +1243,30 @@
   }
 
   const fileContentPane = document.getElementById('file-content-pane');
+  const fileEditor      = document.getElementById('file-editor');
+  const fileEditBtn     = document.getElementById('file-edit-btn');
+  const fileSaveBtn     = document.getElementById('file-save-btn');
+  const fileCancelBtn   = document.getElementById('file-cancel-btn');
+  let   openFilePath    = null;   // path of currently open file
+  let   openFileRaw     = null;   // raw text content (null if binary/notebook)
+
+  function isEditableFile(name) {
+    if (/\.(ipynb)$/i.test(name)) return false;
+    // Allow common text file extensions + extensionless files
+    return /\.(txt|md|markdown|js|mjs|cjs|ts|tsx|jsx|json|jsonl|css|scss|less|html|htm|xml|svg|yaml|yml|toml|ini|cfg|conf|env|sh|bash|zsh|fish|py|pyw|rb|rs|go|java|kt|kts|c|h|cpp|hpp|cc|cxx|cs|swift|lua|pl|pm|php|sql|r|R|jl|ex|exs|erl|hrl|hs|ml|mli|clj|cljs|cljc|scala|dart|v|vh|sv|svh|asm|s|makefile|cmake|dockerfile|gitignore|gitattributes|editorconfig|prettierrc|eslintrc|babelrc|tf|hcl|proto|graphql|gql|vue|svelte|astro|csv|tsv|log|diff|patch|rst|tex|bib|org)$/i.test(name)
+      || !name.includes('.');
+  }
+
+  function exitEditMode() {
+    fileContentPane.classList.remove('editing');
+    fileEditBtn.style.display = openFileRaw !== null ? '' : 'none';
+    fileSaveBtn.style.display = 'none';
+    fileCancelBtn.style.display = 'none';
+  }
 
   function closeFilePane() {
+    exitEditMode();
+    openFilePath = null; openFileRaw = null;
     fileContentPane.classList.remove('open');
     document.getElementById('file-tree').classList.remove('split');
   }
@@ -1384,22 +1420,30 @@
     document.getElementById('file-content-name').textContent = name;
     document.getElementById('file-content-name').title = filePath.replace(/^\/home\/[^/]+/, '~');
     document.getElementById('file-content-warning').textContent = '';
+    exitEditMode();
+    openFilePath = filePath;
+    openFileRaw = null;
     body.classList.remove('notebook', 'markdown');
     body.innerHTML = '';
     body.textContent = 'Loading…';
+    fileEditBtn.style.display = 'none';
     fileContentPane.classList.add('open');
     document.getElementById('file-tree').classList.add('split');
     try {
       const r    = await fetch(`/api/file?path=${encodeURIComponent(filePath)}`);
       const data = await r.json();
       if (!r.ok) throw new Error(data.error);
+      const editable = isEditableFile(name) && !data.truncated;
       if (name.endsWith('.ipynb')) {
         renderNotebook(data.content);
       } else if (/\.md$/i.test(name)) {
         renderMarkdown(data.content);
+        if (editable) openFileRaw = data.content;
       } else {
         body.textContent = data.content;
+        if (editable) openFileRaw = data.content;
       }
+      fileEditBtn.style.display = editable ? '' : 'none';
       if (data.truncated) {
         const mb = (data.size / 1024 / 1024).toFixed(1);
         document.getElementById('file-content-warning').textContent = `truncated (${mb} MB)`;
@@ -1411,6 +1455,71 @@
   }
 
   document.getElementById('file-content-close').addEventListener('click', closeFilePane);
+
+  fileEditBtn.addEventListener('click', () => {
+    if (openFileRaw === null) return;
+    fileEditor.value = openFileRaw;
+    fileContentPane.classList.add('editing');
+    fileEditBtn.style.display = 'none';
+    fileSaveBtn.style.display = '';
+    fileCancelBtn.style.display = '';
+    fileEditor.focus();
+  });
+
+  fileCancelBtn.addEventListener('click', () => {
+    exitEditMode();
+  });
+
+  fileSaveBtn.addEventListener('click', async () => {
+    if (!openFilePath) return;
+    const content = fileEditor.value;
+    fileSaveBtn.disabled = true;
+    fileSaveBtn.textContent = 'saving…';
+    try {
+      const r = await fetch('/api/file', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: openFilePath, content }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error);
+      openFileRaw = content;
+      exitEditMode();
+      // Re-render the view with updated content
+      const name = openFilePath.split('/').pop();
+      const body = document.getElementById('file-content-body');
+      body.classList.remove('notebook', 'markdown');
+      if (/\.md$/i.test(name)) {
+        renderMarkdown(content);
+      } else {
+        body.textContent = content;
+      }
+    } catch (e) {
+      alert('Save failed: ' + e.message);
+    } finally {
+      fileSaveBtn.disabled = false;
+      fileSaveBtn.textContent = 'save';
+    }
+  });
+
+  // Ctrl+S / Cmd+S to save when editing
+  fileEditor.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+      e.preventDefault();
+      fileSaveBtn.click();
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      fileCancelBtn.click();
+    }
+    // Tab inserts a tab character instead of moving focus
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const start = fileEditor.selectionStart;
+      const end   = fileEditor.selectionEnd;
+      fileEditor.value = fileEditor.value.substring(0, start) + '\t' + fileEditor.value.substring(end);
+      fileEditor.selectionStart = fileEditor.selectionEnd = start + 1;
+    }
+  });
 
   // ── Resize ─────────────────────────────────────────────────────────────────
   new ResizeObserver(() => { if (!simpleMode) { fitAddon.fit(); sendResize(); } })

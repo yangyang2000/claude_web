@@ -774,6 +774,20 @@ app.get('/api/file', requireAuth, (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.put('/api/file', requireAuth, (req, res) => {
+  const email    = req.user.email;
+  const filePath = req.body?.path;
+  const content  = req.body?.content;
+  if (!filePath)            return res.status(400).json({ error: 'path required' });
+  if (content === undefined) return res.status(400).json({ error: 'content required' });
+  const resolved = path.resolve(filePath);
+  if (!isAuthorizedPath(email, resolved)) return res.status(403).json({ error: 'not authorized' });
+  try {
+    fs.writeFileSync(resolved, content, 'utf8');
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Admin routes ─────────────────────────────────────────────────────────────
 
 function requireAdmin(req, res, next) {
